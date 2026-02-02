@@ -4,3 +4,5 @@
 tests/
 .env.example
 __pycache__/
+specs/
+AGENTS.md
