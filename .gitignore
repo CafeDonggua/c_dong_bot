@@ -1,2 +1,6 @@
 .codex/
 .specify/
+.env
+tests/
+.env.example
+__pycache__/
