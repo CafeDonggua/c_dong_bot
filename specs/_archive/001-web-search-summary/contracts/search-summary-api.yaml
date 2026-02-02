@@ -1,0 +1,86 @@
+openapi: 3.0.3
+info:
+  title: 網路搜尋彙整 API
+  version: 1.0.0
+  description: 提供關鍵字搜尋與連結摘要的統一介面
+paths:
+  /assistant/search:
+    post:
+      summary: 關鍵字搜尋彙整
+      description: 以關鍵字搜尋並回覆摘要、重點與來源
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SearchRequest'
+      responses:
+        '200':
+          description: 搜尋彙整成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchResponse'
+  /assistant/link-summary:
+    post:
+      summary: 連結摘要彙整
+      description: 以連結內容產出摘要、重點與來源
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LinkSummaryRequest'
+      responses:
+        '200':
+          description: 連結摘要成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchResponse'
+components:
+  schemas:
+    SearchRequest:
+      type: object
+      required:
+        - user_id
+        - query
+      properties:
+        user_id:
+          type: string
+          description: 使用者識別
+        query:
+          type: string
+          description: 關鍵字或主題
+    LinkSummaryRequest:
+      type: object
+      required:
+        - user_id
+        - url
+      properties:
+        user_id:
+          type: string
+          description: 使用者識別
+        url:
+          type: string
+          description: 目標網址
+    SearchResponse:
+      type: object
+      required:
+        - summary
+        - bullets
+        - sources
+      properties:
+        summary:
+          type: string
+          description: 彙整摘要
+        bullets:
+          type: array
+          description: 重點條列
+          items:
+            type: string
+        sources:
+          type: array
+          description: 來源列表
+          items:
+            type: string

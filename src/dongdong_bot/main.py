@@ -8,6 +8,8 @@ from dongdong_bot.config import load_config
 from dongdong_bot.goap import GoapEngine
 from dongdong_bot.lib.embedding_client import EmbeddingClient
 from dongdong_bot.lib.intent_classifier import IntentClassifier, IntentExample
+from dongdong_bot.lib.search_client import SearchClient
+from dongdong_bot.lib.search_formatter import SearchFormatter
 from dongdong_bot.memory_store import MemoryStore
 from dongdong_bot.monitoring import Monitoring
 from dongdong_bot.telegram_client import TelegramClient
@@ -25,6 +27,42 @@ class OpenAIClient:
         return response.output_text
 
 
+def _handle_search_command(
+    text: str,
+    search_client: SearchClient,
+    formatter: SearchFormatter,
+    monitoring: Monitoring | None = None,
+) -> str:
+    query = text.replace("/search", "", 1).strip()
+    if not query:
+        return "請提供關鍵字，例如：/search 台灣能源政策"
+    try:
+        response = search_client.search_keyword(query)
+        return formatter.format(response)
+    except Exception as exc:
+        if monitoring is not None:
+            monitoring.error(exc)
+        return "搜尋失敗，請稍後再試或調整關鍵字。"
+
+
+def _handle_summary_command(
+    text: str,
+    search_client: SearchClient,
+    formatter: SearchFormatter,
+    monitoring: Monitoring | None = None,
+) -> str:
+    url = text.replace("/summary", "", 1).strip()
+    if not url:
+        return "請提供連結，例如：/summary https://example.com"
+    try:
+        response = search_client.summarize_link(url)
+        return formatter.format(response)
+    except Exception as exc:
+        if monitoring is not None:
+            monitoring.error(exc)
+        return "連結摘要失敗，請確認網址可存取後再試。"
+
+
 def main() -> None:
     config = load_config()
     monitoring = Monitoring(
@@ -33,6 +71,8 @@ def main() -> None:
     )
     llm_client = OpenAIClient(config.openai_api_key)
     embedding_client = EmbeddingClient(config.embedding_api_key, config.embedding_model)
+    search_client = SearchClient(config.search_api_key, config.search_model)
+    search_formatter = SearchFormatter()
     intent_classifier = IntentClassifier(
         embedding_client,
         examples=[
@@ -68,6 +108,10 @@ def main() -> None:
 
     def handle_text(text: str):
         start_time = time.perf_counter()
+        if text.startswith("/search"):
+            return _handle_search_command(text, search_client, search_formatter, monitoring)
+        if text.startswith("/summary"):
+            return _handle_summary_command(text, search_client, search_formatter, monitoring)
         response = goap.respond(text)
         if config.perf_log:
             goap_ms = (time.perf_counter() - start_time) * 1000

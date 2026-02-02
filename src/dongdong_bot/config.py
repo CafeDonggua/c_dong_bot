@@ -11,12 +11,14 @@ MEMORY_DIR = "/data/data/com.termux/files/home/storage/shared/C_Dong_bot"
 DEFAULT_MODEL = "gpt-5-mini"
 FAST_MODEL = "gpt-4o-mini"
 EMBEDDING_MODEL = "text-embedding-3-small"
+SEARCH_MODEL = "gpt-4o-mini-search-preview"
 EMBEDDING_INDEX_FILENAME = "embeddings.jsonl"
 INTENT_CACHE_FILENAME = "intent_index.json"
 HEARTBEAT_INTERVAL_SECONDS = 30 * 60
 ERROR_THROTTLE_SECONDS = 60
 PERF_LOG_ENV = "PERF_LOG"
 EMBEDDING_KEY_ENV = "OPENAI_EMBEDDING_KEY"
+SEARCH_KEY_ENV = "OPENAI_SEARCH_API_KEY"
 
 
 @dataclass(frozen=True)
@@ -30,6 +32,8 @@ class Config:
     embedding_model: str = EMBEDDING_MODEL
     embedding_index_path: str = str(Path(MEMORY_DIR) / EMBEDDING_INDEX_FILENAME)
     intent_cache_path: str = str(Path(MEMORY_DIR) / INTENT_CACHE_FILENAME)
+    search_api_key: str = ""
+    search_model: str = SEARCH_MODEL
     heartbeat_interval_seconds: int = HEARTBEAT_INTERVAL_SECONDS
     error_throttle_seconds: int = ERROR_THROTTLE_SECONDS
     perf_log: bool = False
@@ -43,12 +47,15 @@ def load_config() -> Config:
     load_dotenv(ENV_PATH)
     openai_api_key = os.getenv("OPENAI_API_KEY", "").strip()
     embedding_api_key = os.getenv(EMBEDDING_KEY_ENV, "").strip()
+    search_api_key = os.getenv(SEARCH_KEY_ENV, "").strip()
     telegram_bot_token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 
     if not openai_api_key:
         raise RuntimeError("缺少 OPENAI_API_KEY，請確認 .env 絕對路徑設定")
     if not embedding_api_key:
         embedding_api_key = openai_api_key
+    if not search_api_key:
+        search_api_key = openai_api_key
     if not telegram_bot_token:
         raise RuntimeError("缺少 TELEGRAM_BOT_TOKEN，請確認 .env 絕對路徑設定")
 
@@ -59,6 +66,7 @@ def load_config() -> Config:
     return Config(
         openai_api_key=openai_api_key,
         embedding_api_key=embedding_api_key,
+        search_api_key=search_api_key,
         telegram_bot_token=telegram_bot_token,
         perf_log=perf_log,
     )
