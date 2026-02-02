@@ -2,7 +2,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
-from typing import Any, Dict, List, Optional, Tuple
+import time
+from typing import Any, Callable, Dict, List, Optional, Tuple
+
+
+IntentClassifierFn = Callable[[str], tuple[str | None, float]]
+INTENT_SCORE_THRESHOLD = 0.78
 
 
 @dataclass
@@ -23,6 +28,8 @@ class StepResult:
 class BotResponse:
     reply: str
     stop_reason: Optional[str]
+    decision: str
+    tool_reason: Optional[str] = None
     memory_content: Optional[str] = None
     memory_query: Optional[str] = None
     memory_date: Optional[str] = None
@@ -34,19 +41,74 @@ class GoapEngine:
         self,
         llm_client,
         model: str,
+        fast_model: str,
+        intent_classifier: IntentClassifierFn | None = None,
+        shortcuts_enabled: bool = True,
         base_max_iters: int = 3,
         max_iters_cap: int = 6,
         no_progress_limit: int = 3,
         json_retry_limit: int = 1,
+        perf_log: bool = False,
     ) -> None:
         self.llm_client = llm_client
         self.model = model
+        self.fast_model = fast_model
+        self.intent_classifier = intent_classifier
+        self.shortcuts_enabled = shortcuts_enabled
         self.base_max_iters = base_max_iters
         self.max_iters_cap = max_iters_cap
         self.no_progress_limit = no_progress_limit
         self.json_retry_limit = json_retry_limit
+        self.perf_log = perf_log
 
     def respond(self, user_text: str) -> BotResponse:
+        start_time = time.perf_counter()
+        if self.shortcuts_enabled:
+            decision, reason = self._route_intent(user_text)
+            if self._should_direct_reply(user_text, decision):
+                reply = self._direct_reply(user_text)
+                if self.perf_log:
+                    elapsed_ms = (time.perf_counter() - start_time) * 1000
+                    print(f"[perf] goap.direct_reply total_ms={elapsed_ms:.1f}")
+                return BotResponse(
+                    reply=reply,
+                    stop_reason=None,
+                    decision="direct_reply",
+                    tool_reason=reason,
+                )
+            if decision == "memory_save":
+                content = self._extract_memory_content(user_text)
+                if content:
+                    return BotResponse(
+                        reply="已記住。",
+                        stop_reason=None,
+                        decision=decision,
+                        memory_content=content,
+                    )
+            if decision == "memory_query":
+                return BotResponse(
+                    reply="我幫你查一下。",
+                    stop_reason=None,
+                    decision=decision,
+                    memory_query=user_text.strip(),
+                )
+            if decision == "use_tool":
+                reply = (
+                    "這個問題需要即時工具或外部資料，但目前工具尚未啟用。"
+                    "若你希望我改用一般知識回答，請告訴我。"
+                )
+                if self.perf_log:
+                    elapsed_ms = (time.perf_counter() - start_time) * 1000
+                    print(f"[perf] goap.tool_stub total_ms={elapsed_ms:.1f}")
+                return BotResponse(
+                    reply=reply,
+                    stop_reason=None,
+                    decision=decision,
+                    tool_reason=reason,
+                )
+        else:
+            decision, reason = "goap", None
+
         history: List[StepResult] = []
         max_iters = self.base_max_iters
         stop_reason = None
@@ -89,14 +151,31 @@ class GoapEngine:
                 memory_date = step.memory_date
                 memory_date_range = step.memory_date_range
                 break
-        return BotResponse(
+        response = BotResponse(
             reply=final_reply,
             stop_reason=stop_reason,
+            decision=decision,
+            tool_reason=reason,
             memory_content=memory_content,
             memory_query=memory_query,
             memory_date=memory_date,
             memory_date_range=memory_date_range,
         )
+        if self.perf_log:
+            elapsed_ms = (time.perf_counter() - start_time) * 1000
+            print(f"[perf] goap.respond total_ms={elapsed_ms:.1f}")
+        return response
+
+    def _should_direct_reply(self, user_text: str, decision: str) -> bool:
+        return decision == "direct_reply"
+
+    def _route_intent(self, user_text: str) -> Tuple[str, Optional[str]]:
+        if self.intent_classifier is not None:
+            intent, score = self.intent_classifier(user_text)
+            if intent and score >= INTENT_SCORE_THRESHOLD:
+                if intent in {"memory_query", "memory_save", "use_tool"}:
+                    return intent, f"語意判斷:{intent}"
+        return "direct_reply", None
 
     def _is_repeating(self, history: List[StepResult]) -> bool:
         if len(history) < 2:
@@ -126,6 +205,27 @@ class GoapEngine:
             memory_date_range=parsed.get("memory_date_range") or None,
         )
 
+    def _direct_reply(self, user_text: str) -> str:
+        prompt = (
+            "你是 Telegram 個人助理，請直接回覆使用者的問題。\n"
+            "回覆需簡潔、清楚，且避免要求多輪確認。\n\n"
+            f"使用者輸入: {user_text}\n"
+        )
+        return (
+            self.llm_client.generate(model=self.fast_model, prompt=prompt).strip()
+            or "我已理解你的需求。"
+        )
+
+    @staticmethod
+    def _extract_memory_content(user_text: str) -> Optional[str]:
+        for keyword in ("記住", "記下", "備忘"):
+            if keyword in user_text:
+                content = user_text.split(keyword, 1)[1].strip()
+                content = content.strip(" ：:，,。.!？?　")
+                if content:
+                    return content
+        return None
+
     def _build_prompt(self, user_text: str, history: List[StepResult]) -> str:
         history_lines = []
         for idx, step in enumerate(history, start=1):
@@ -148,7 +248,11 @@ class GoapEngine:
     def _request_json(self, prompt: str) -> Dict[str, Any]:
         last_raw = ""
         for attempt in range(self.json_retry_limit + 1):
+            call_start = time.perf_counter()
             raw = self.llm_client.generate(model=self.model, prompt=prompt)
+            if self.perf_log:
+                call_ms = (time.perf_counter() - call_start) * 1000
+                print(f"[perf] openai.generate attempt={attempt + 1} ms={call_ms:.1f}")
             last_raw = raw
             parsed = self._parse_json(raw)
             if parsed is not None:
