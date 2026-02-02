@@ -14,6 +14,8 @@ EMBEDDING_MODEL = "text-embedding-3-small"
 SEARCH_MODEL = "gpt-4o-mini-search-preview"
 EMBEDDING_INDEX_FILENAME = "embeddings.jsonl"
 INTENT_CACHE_FILENAME = "intent_index.json"
+MEMORY_SUBDIR = "memory"
+REPORTS_SUBDIR = "reports"
 HEARTBEAT_INTERVAL_SECONDS = 30 * 60
 ERROR_THROTTLE_SECONDS = 60
 PERF_LOG_ENV = "PERF_LOG"
@@ -32,6 +34,8 @@ class Config:
     embedding_model: str = EMBEDDING_MODEL
     embedding_index_path: str = str(Path(MEMORY_DIR) / EMBEDDING_INDEX_FILENAME)
     intent_cache_path: str = str(Path(MEMORY_DIR) / INTENT_CACHE_FILENAME)
+    memory_path: str = str(Path(MEMORY_DIR) / MEMORY_SUBDIR)
+    reports_path: str = str(Path(MEMORY_DIR) / REPORTS_SUBDIR)
     search_api_key: str = ""
     search_model: str = SEARCH_MODEL
     heartbeat_interval_seconds: int = HEARTBEAT_INTERVAL_SECONDS

@@ -7,7 +7,12 @@ class SearchFormatter:
     @staticmethod
     def format(response: SearchResponse) -> str:
         if response.is_empty():
-            return "找不到相關結果，請改用更具體的關鍵字或提供其他連結。"
+            return (
+                "找不到相關結果，請嘗試：\n"
+                "1) 縮小範圍（加入時間/地點/公司名稱）\n"
+                "2) 改用同義詞或別名\n"
+                "3) 分拆成 2~3 個較小主題再查"
+            )
         if not response.summary and response.raw_text:
             return response.raw_text
         summary = response.summary or "(無摘要)"

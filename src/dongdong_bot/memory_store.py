@@ -17,15 +17,33 @@ class MemoryEntry:
 
 
 class MemoryStore:
-    def __init__(self, base_dir: str, embedding_index_path: str | None = None) -> None:
-        self.base_dir = Path(base_dir)
-        self.base_dir.mkdir(parents=True, exist_ok=True)
+    def __init__(
+        self,
+        base_dir: str,
+        embedding_index_path: str | None = None,
+        memory_subdir: str = "memory",
+        reports_subdir: str = "reports",
+    ) -> None:
+        self.root_dir = Path(base_dir)
+        self.memory_dir = self.root_dir / memory_subdir
+        self.reports_dir = self.root_dir / reports_subdir
+        self.memory_dir.mkdir(parents=True, exist_ok=True)
+        self.reports_dir.mkdir(parents=True, exist_ok=True)
         self.embedding_index_path = (
-            Path(embedding_index_path) if embedding_index_path else self.base_dir / "embeddings.jsonl"
+            Path(embedding_index_path) if embedding_index_path else self.root_dir / "embeddings.jsonl"
         )
+        self._legacy_dir = self.root_dir
 
     def _file_path(self, date: str) -> Path:
-        return self.base_dir / f"{date}.md"
+        return self.memory_dir / f"{date}.md"
+
+    def log_report(self, title: str, report_path: Path, date: str | None = None) -> Path:
+        date = date or datetime.now().strftime("%Y-%m-%d")
+        path = self._file_path(date)
+        relative = Path("..") / report_path.relative_to(self.root_dir)
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(f"- 已整理案例：{title} ([檔案]({relative.as_posix()}))\n")
+        return path
 
     def save(self, content: str, date: str | None = None) -> Path:
         date = date or datetime.now().strftime("%Y-%m-%d")
@@ -56,12 +74,18 @@ class MemoryStore:
     def query(self, query: str, date: str | None = None) -> List[str]:
         date = date or datetime.now().strftime("%Y-%m-%d")
         path = self._file_path(date)
-        if not path.exists():
+        legacy_path = self._legacy_dir / f"{date}.md"
+        if not path.exists() and not legacy_path.exists():
             return []
         results = []
-        for line in path.read_text(encoding="utf-8").splitlines():
-            if query in line:
-                results.append(line.lstrip("- "))
+        if path.exists():
+            for line in path.read_text(encoding="utf-8").splitlines():
+                if query in line:
+                    results.append(line.lstrip("- "))
+        if legacy_path.exists():
+            for line in legacy_path.read_text(encoding="utf-8").splitlines():
+                if query in line:
+                    results.append(line.lstrip("- "))
         return results
 
     def semantic_search(

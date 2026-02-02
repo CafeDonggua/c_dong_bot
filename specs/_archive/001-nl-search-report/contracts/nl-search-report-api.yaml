@@ -1,0 +1,89 @@
+openapi: 3.0.3
+info:
+  title: 自然語言搜尋與案例整理 API
+  version: 1.0.0
+  description: 提供自然語言搜尋彙整與案例文件產出介面
+paths:
+  /assistant/nl-search:
+    post:
+      summary: 自然語言搜尋彙整
+      description: 解析自然語言需求、搜尋並回覆摘要
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NLSearchRequest'
+      responses:
+        '200':
+          description: 搜尋彙整成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NLSearchResponse'
+  /assistant/nl-report:
+    post:
+      summary: 產出案例文件
+      description: 將搜尋結果彙整為案例文件並提供存取位置
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NLReportRequest'
+      responses:
+        '200':
+          description: 案例文件產出成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NLReportResponse'
+components:
+  schemas:
+    NLSearchRequest:
+      type: object
+      required:
+        - user_id
+        - input_text
+      properties:
+        user_id:
+          type: string
+          description: 使用者識別
+        input_text:
+          type: string
+          description: 自然語言需求
+    NLSearchResponse:
+      type: object
+      required:
+        - summary
+        - bullets
+        - sources
+      properties:
+        summary:
+          type: string
+        bullets:
+          type: array
+          items:
+            type: string
+        sources:
+          type: array
+          items:
+            type: string
+    NLReportRequest:
+      type: object
+      required:
+        - user_id
+        - input_text
+      properties:
+        user_id:
+          type: string
+        input_text:
+          type: string
+    NLReportResponse:
+      type: object
+      required:
+        - report_path
+      properties:
+        report_path:
+          type: string
+          description: 案例文件存取路徑

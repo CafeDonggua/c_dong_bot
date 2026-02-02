@@ -10,6 +10,8 @@ from dongdong_bot.lib.embedding_client import EmbeddingClient
 from dongdong_bot.lib.intent_classifier import IntentClassifier, IntentExample
 from dongdong_bot.lib.search_client import SearchClient
 from dongdong_bot.lib.search_formatter import SearchFormatter
+from dongdong_bot.lib.nl_search_topic import NLSearchTopicExtractor
+from dongdong_bot.lib.report_writer import ReportWriter
 from dongdong_bot.memory_store import MemoryStore
 from dongdong_bot.monitoring import Monitoring
 from dongdong_bot.telegram_client import TelegramClient
@@ -73,6 +75,11 @@ def main() -> None:
     embedding_client = EmbeddingClient(config.embedding_api_key, config.embedding_model)
     search_client = SearchClient(config.search_api_key, config.search_model)
     search_formatter = SearchFormatter()
+    report_writer = ReportWriter(config.reports_path)
+    nl_topic = NLSearchTopicExtractor(
+        generate=llm_client.generate,
+        model=config.fast_model,
+    )
     intent_classifier = IntentClassifier(
         embedding_client,
         examples=[
@@ -103,7 +110,10 @@ def main() -> None:
         json_retry_limit=config.json_retry_limit,
         perf_log=config.perf_log,
     )
-    memory_store = MemoryStore(config.memory_dir, embedding_index_path=config.embedding_index_path)
+    memory_store = MemoryStore(
+        config.memory_dir,
+        embedding_index_path=config.embedding_index_path,
+    )
     telegram = TelegramClient(config.telegram_bot_token, monitoring, perf_log=config.perf_log)
 
     def handle_text(text: str):
@@ -112,6 +122,25 @@ def main() -> None:
             return _handle_search_command(text, search_client, search_formatter, monitoring)
         if text.startswith("/summary"):
             return _handle_summary_command(text, search_client, search_formatter, monitoring)
+        plan = nl_topic.extract(text)
+        if plan.is_search and plan.topic:
+            try:
+                response = search_client.search_keyword(plan.topic)
+                if plan.wants_report:
+                    if response.is_empty():
+                        return "找不到相關結果，無法產出案例文件。"
+                    report_path = report_writer.write(
+                        title=plan.topic,
+                        summary=response.summary or "（無摘要）",
+                        bullets=response.bullets or ["（無重點）"],
+                        sources=response.sources or ["（無來源）"],
+                    )
+                    memory_store.log_report(plan.topic, report_path)
+                    return f"已完成案例整理，檔案：{report_path}"
+                return search_formatter.format(response)
+            except Exception as exc:
+                monitoring.error(exc)
+                return "搜尋失敗，請稍後再試或調整關鍵字。"
         response = goap.respond(text)
         if config.perf_log:
             goap_ms = (time.perf_counter() - start_time) * 1000
