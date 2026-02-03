@@ -12,6 +12,7 @@ from dongdong_bot.lib.search_client import SearchClient
 from dongdong_bot.lib.search_formatter import SearchFormatter
 from dongdong_bot.lib.nl_search_topic import NLSearchTopicExtractor
 from dongdong_bot.lib.report_writer import ReportWriter
+from dongdong_bot.lib.response_style import ResponseStyler
 from dongdong_bot.memory_store import MemoryStore
 from dongdong_bot.monitoring import Monitoring
 from dongdong_bot.telegram_client import TelegramClient
@@ -93,6 +94,7 @@ def main() -> None:
         generate=llm_client.generate,
         model=config.fast_model,
     )
+    response_styler = ResponseStyler()
     intent_classifier = IntentClassifier(
         embedding_client,
         examples=[
@@ -159,6 +161,9 @@ def main() -> None:
                 monitoring.error(exc)
                 return _format_search_error(exc, search_formatter)
         response = goap.respond(text)
+        if response.decision in {"direct_reply", "goap"} and not response.memory_query:
+            styled = response_styler.style(response.reply, text)
+            response.reply = styled.reply
         if config.perf_log:
             goap_ms = (time.perf_counter() - start_time) * 1000
             monitoring.perf("handle_text.goap", goap_ms, f"decision={response.decision}")
@@ -202,6 +207,7 @@ def main() -> None:
                 response.reply = f"{response.reply}\n\n記憶檢索暫時無法使用，請稍後再試。"
                 return response
             if results:
+                results = memory_store.summarize_results(results)
                 joined = "\n".join(f"- {item}" for item in results)
                 response.reply = f"找到的記憶：\n{joined}"
             else:

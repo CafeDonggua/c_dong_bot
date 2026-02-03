@@ -133,6 +133,29 @@ class MemoryStore:
             results.extend(self.query(query, date=date))
         return results
 
+    def summarize_results(
+        self,
+        results: List[str],
+        max_items: int = 5,
+        max_chars: int = 120,
+    ) -> List[str]:
+        if not results:
+            return []
+        trimmed = []
+        for item in results:
+            text = item.strip()
+            if len(text) > max_chars:
+                text = text[: max_chars - 1].rstrip() + "…"
+            trimmed.append(text)
+        deduped = []
+        seen = set()
+        for item in trimmed:
+            if item in seen:
+                continue
+            seen.add(item)
+            deduped.append(item)
+        return deduped[:max_items]
+
     def _date_range(self, start: str, end: str) -> Iterable[str]:
         start_dt = self._parse_date(start)
         end_dt = self._parse_date(end)

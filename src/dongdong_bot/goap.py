@@ -228,10 +228,22 @@ class GoapEngine:
 
     def _build_prompt(self, user_text: str, history: List[StepResult]) -> str:
         history_lines = []
-        for idx, step in enumerate(history, start=1):
-            history_lines.append(
-                f"步驟 {idx}: 目標={step.goal} 行動={step.action} 觀察={step.observation}"
-            )
+        if len(history) > 4:
+            compacted = []
+            for step in history[:-2]:
+                compacted.append(f"{step.goal}/{step.action}")
+            summary = "、".join(compacted) if compacted else "（無）"
+            history_lines.append(f"前序摘要: {summary}")
+            tail = history[-2:]
+            for idx, step in enumerate(tail, start=len(history) - 1):
+                history_lines.append(
+                    f"步驟 {idx}: 目標={step.goal} 行動={step.action} 觀察={step.observation}"
+                )
+        else:
+            for idx, step in enumerate(history, start=1):
+                history_lines.append(
+                    f"步驟 {idx}: 目標={step.goal} 行動={step.action} 觀察={step.observation}"
+                )
         history_block = "\n".join(history_lines) if history_lines else "(無)"
 
         return (
