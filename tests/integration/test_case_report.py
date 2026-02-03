@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from dongdong_bot.lib.report_content import ReportContent
 from dongdong_bot.lib.report_writer import ReportWriter
 
 
@@ -8,9 +9,11 @@ def test_case_report_written(tmp_path: Path):
 
     report = writer.write(
         title="測試案例",
-        summary="摘要",
-        bullets=["重點"],
-        sources=["https://example.com"],
+        content=ReportContent(
+            summary="摘要",
+            bullets=["重點"],
+            sources=["https://example.com"],
+        ),
     )
 
     assert report.exists()

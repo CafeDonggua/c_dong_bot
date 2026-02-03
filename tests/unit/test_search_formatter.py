@@ -26,8 +26,8 @@ def test_format_search_response_with_placeholders():
 
     text = SearchFormatter.format(response)
 
-    assert "(無摘要)" in text
-    assert "(無重點)" in text
+    assert "原因" in text
+    assert "建議" in text
     assert "https://example.com" in text
 
 

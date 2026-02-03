@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from datetime import datetime
 
 from openai import NotFoundError, OpenAI, PermissionDeniedError
 
@@ -11,6 +12,7 @@ from dongdong_bot.lib.intent_classifier import IntentClassifier, IntentExample
 from dongdong_bot.lib.search_client import SearchClient
 from dongdong_bot.lib.search_formatter import SearchFormatter
 from dongdong_bot.lib.nl_search_topic import NLSearchTopicExtractor
+from dongdong_bot.lib.report_content import normalize_report_content
 from dongdong_bot.lib.report_writer import ReportWriter
 from dongdong_bot.lib.response_style import ResponseStyler
 from dongdong_bot.memory_store import MemoryStore
@@ -145,14 +147,17 @@ def main() -> None:
                 else:
                     response = search_client.search_keyword(plan.topic)
                 if plan.wants_report:
-                    if response.is_empty():
-                        return "找不到相關結果，無法產出案例文件。"
                     title = plan.topic or plan.url
+                    normalized = normalize_report_content(
+                        response,
+                        reason="找不到相關結果或來源內容不足",
+                        suggestion="請調整關鍵字、加入時間/地點或改用 /search 指令再試。",
+                    )
                     report_path = report_writer.write(
                         title=title,
-                        summary=response.summary or "（無摘要）",
-                        bullets=response.bullets or ["（無重點）"],
-                        sources=response.sources or ["（無來源）"],
+                        content=normalized,
+                        query_text=title,
+                        query_time=datetime.now(),
                     )
                     memory_store.log_report(title, report_path)
                     return f"已完成案例整理，檔案：{report_path}"
