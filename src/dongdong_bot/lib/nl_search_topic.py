@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from typing import Callable, Optional
 
@@ -22,6 +23,14 @@ class NLSearchTopicExtractor:
         raw = self.generate(self.model, f"{prompt}\n使用者輸入：{user_text}")
         parsed = self._parse_json(raw)
         if parsed is None:
+            retry_prompt = (
+                f"{prompt}\n"
+                "請只輸出單行 JSON，不要任何多餘文字或說明。\n"
+                f"使用者輸入：{user_text}"
+            )
+            raw = self.generate(self.model, retry_prompt)
+            parsed = self._parse_json(raw)
+        if parsed is None:
             return NLSearchPlan(is_search=False, topic="", wants_report=False)
         return NLSearchPlan(
             is_search=bool(parsed.get("is_search", False)),
@@ -31,7 +40,45 @@ class NLSearchTopicExtractor:
 
     @staticmethod
     def _parse_json(raw: str) -> Optional[dict]:
+        raw = raw.strip()
+        if not raw:
+            return None
+        if raw.startswith("```"):
+            extracted = NLSearchTopicExtractor._extract_json_from_codeblock(raw)
+            if extracted:
+                return extracted
+        if raw[0] != "{":
+            extracted = NLSearchTopicExtractor._extract_json_object(raw)
+            if extracted:
+                return extracted
         try:
             return json.loads(raw)
+        except json.JSONDecodeError:
+            return None
+
+    @staticmethod
+    def _extract_json_from_codeblock(raw: str) -> Optional[dict]:
+        match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw, re.DOTALL)
+        if not match:
+            return None
+        return NLSearchTopicExtractor._extract_json_object(match.group(1))
+
+    @staticmethod
+    def _extract_json_object(raw: str) -> Optional[dict]:
+        start = raw.find("{")
+        end = raw.rfind("}")
+        if start == -1 or end == -1 or end <= start:
+            return None
+        candidate = raw[start : end + 1]
+        parsed = NLSearchTopicExtractor._try_json_loads(candidate)
+        if parsed is not None:
+            return parsed
+        cleaned = re.sub(r",\s*([}\]])", r"\1", candidate)
+        return NLSearchTopicExtractor._try_json_loads(cleaned)
+
+    @staticmethod
+    def _try_json_loads(candidate: str) -> Optional[dict]:
+        try:
+            return json.loads(candidate)
         except json.JSONDecodeError:
             return None

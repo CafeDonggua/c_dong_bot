@@ -15,3 +15,30 @@ def test_format_search_response():
     assert "重點" in text
     assert "來源" in text
     assert "https://example.com" in text
+
+
+def test_format_search_response_with_placeholders():
+    response = SearchResponse(
+        summary="",
+        bullets=[],
+        sources=["https://example.com"],
+    )
+
+    text = SearchFormatter.format(response)
+
+    assert "(無摘要)" in text
+    assert "(無重點)" in text
+    assert "https://example.com" in text
+
+
+def test_format_empty_response_shows_hint():
+    response = SearchResponse(
+        summary="",
+        bullets=[],
+        sources=[],
+        raw_text="",
+    )
+
+    text = SearchFormatter.format(response)
+
+    assert "找不到相關結果" in text

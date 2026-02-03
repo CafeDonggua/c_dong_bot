@@ -34,3 +34,19 @@ def test_nl_search_flow():
 
     assert "摘要" in response
     assert "來源" in response
+
+
+def test_nl_search_flow_with_codeblock():
+    def fake_generate(_model: str, _prompt: str) -> str:
+        return "```json\n{\"is_search\": true, \"topic\": \"測試主題\", \"wants_report\": false}\n```"
+
+    extractor = NLSearchTopicExtractor(generate=fake_generate, model="gpt-4o-mini")
+    response = handle_nl_search(
+        "請幫我整理測試主題",
+        extractor,
+        FakeSearchClient(),
+        SearchFormatter(),
+    )
+
+    assert "摘要" in response
+    assert "來源" in response
