@@ -30,12 +30,21 @@ class NLSearchTopicExtractor:
             )
             raw = self.generate(self.model, retry_prompt)
             parsed = self._parse_json(raw)
-        if parsed is None:
-            return NLSearchPlan(is_search=False, topic="", wants_report=False)
+        url = self._extract_url(user_text)
+        if parsed is None and not url:
+            return NLSearchPlan(is_search=False, topic="", url="", wants_report=False)
+        is_search = bool(parsed.get("is_search", False)) if parsed else False
+        topic = str(parsed.get("topic", "") or "").strip() if parsed else ""
+        wants_report = bool(parsed.get("wants_report", False)) if parsed else False
+        if url:
+            is_search = True
+        if not wants_report and self._detect_save_intent(user_text):
+            wants_report = True
         return NLSearchPlan(
-            is_search=bool(parsed.get("is_search", False)),
-            topic=str(parsed.get("topic", "") or "").strip(),
-            wants_report=bool(parsed.get("wants_report", False)),
+            is_search=is_search,
+            topic=topic,
+            url=url or "",
+            wants_report=wants_report,
         )
 
     @staticmethod
@@ -82,3 +91,15 @@ class NLSearchTopicExtractor:
             return json.loads(candidate)
         except json.JSONDecodeError:
             return None
+
+    @staticmethod
+    def _extract_url(text: str) -> str:
+        match = re.search(r"https?://\S+", text)
+        if not match:
+            return ""
+        return match.group(0).rstrip(")")
+
+    @staticmethod
+    def _detect_save_intent(text: str) -> bool:
+        keywords = ("儲存", "保存", "存檔", "記錄")
+        return any(keyword in text for keyword in keywords)

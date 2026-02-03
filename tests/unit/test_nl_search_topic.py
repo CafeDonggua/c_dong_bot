@@ -56,3 +56,26 @@ def test_extract_search_topic_retry_on_invalid_json():
     assert plan.topic == "新聞摘要"
     assert plan.wants_report is True
     assert calls["count"] == 2
+
+
+def test_extract_search_topic_with_url():
+    def fake_generate(_model: str, _prompt: str) -> str:
+        return '{"is_search": false, "topic": "", "wants_report": false}'
+
+    extractor = NLSearchTopicExtractor(generate=fake_generate, model="gpt-4o-mini")
+
+    plan = extractor.extract("請幫我整理 https://example.com")
+
+    assert plan.is_search is True
+    assert plan.url == "https://example.com"
+
+
+def test_extract_search_topic_save_intent_override():
+    def fake_generate(_model: str, _prompt: str) -> str:
+        return '{"is_search": true, "topic": "測試主題", "wants_report": false}'
+
+    extractor = NLSearchTopicExtractor(generate=fake_generate, model="gpt-4o-mini")
+
+    plan = extractor.extract("幫我整理測試主題並儲存")
+
+    assert plan.wants_report is True

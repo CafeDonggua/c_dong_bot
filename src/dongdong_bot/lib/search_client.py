@@ -43,7 +43,7 @@ class SearchClient:
             try:
                 response = self._client.responses.create(
                     model=model,
-                    tools=[{"type": "web_search"}],
+                    tools=[{"type": "web_search_preview"}],
                     input=[
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_input},

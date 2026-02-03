@@ -42,3 +42,11 @@ def test_format_empty_response_shows_hint():
     text = SearchFormatter.format(response)
 
     assert "找不到相關結果" in text
+
+
+def test_format_error_message():
+    text = SearchFormatter.format_error("搜尋模型不可用", "請確認 API KEY")
+
+    assert "搜尋失敗" in text
+    assert "搜尋模型不可用" in text
+    assert "請確認 API KEY" in text

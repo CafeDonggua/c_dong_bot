@@ -28,3 +28,7 @@ class SearchFormatter:
             "來源：\n"
             f"{sources_block}"
         )
+
+    @staticmethod
+    def format_error(reason: str, suggestion: str) -> str:
+        return f"搜尋失敗：{reason}\n建議：{suggestion}"

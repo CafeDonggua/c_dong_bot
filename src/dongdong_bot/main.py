@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import time
 
-from openai import OpenAI
+from openai import NotFoundError, OpenAI, PermissionDeniedError
 
 from dongdong_bot.config import load_config
 from dongdong_bot.goap import GoapEngine
@@ -44,7 +44,7 @@ def _handle_search_command(
     except Exception as exc:
         if monitoring is not None:
             monitoring.error(exc)
-        return "搜尋失敗，請稍後再試或調整關鍵字。"
+        return _format_search_error(exc, formatter)
 
 
 def _handle_summary_command(
@@ -62,7 +62,20 @@ def _handle_summary_command(
     except Exception as exc:
         if monitoring is not None:
             monitoring.error(exc)
-        return "連結摘要失敗，請確認網址可存取後再試。"
+        return _format_search_error(exc, formatter, default_reason="連結摘要失敗")
+
+
+def _format_search_error(
+    exc: Exception,
+    formatter: SearchFormatter,
+    default_reason: str = "搜尋失敗",
+) -> str:
+    reason = default_reason
+    suggestion = "請稍後再試或改用 /search /summary 指令。"
+    if isinstance(exc, (NotFoundError, PermissionDeniedError)):
+        reason = "搜尋模型不可用或權限不足"
+        suggestion = "請確認 OPENAI_SEARCH_API_KEY 或改用 /search 指令。"
+    return formatter.format_error(reason, suggestion)
 
 
 def main() -> None:
@@ -123,24 +136,28 @@ def main() -> None:
         if text.startswith("/summary"):
             return _handle_summary_command(text, search_client, search_formatter, monitoring)
         plan = nl_topic.extract(text)
-        if plan.is_search and plan.topic:
+        if plan.is_search and (plan.topic or plan.url):
             try:
-                response = search_client.search_keyword(plan.topic)
+                if plan.url:
+                    response = search_client.summarize_link(plan.url)
+                else:
+                    response = search_client.search_keyword(plan.topic)
                 if plan.wants_report:
                     if response.is_empty():
                         return "找不到相關結果，無法產出案例文件。"
+                    title = plan.topic or plan.url
                     report_path = report_writer.write(
-                        title=plan.topic,
+                        title=title,
                         summary=response.summary or "（無摘要）",
                         bullets=response.bullets or ["（無重點）"],
                         sources=response.sources or ["（無來源）"],
                     )
-                    memory_store.log_report(plan.topic, report_path)
+                    memory_store.log_report(title, report_path)
                     return f"已完成案例整理，檔案：{report_path}"
                 return search_formatter.format(response)
             except Exception as exc:
                 monitoring.error(exc)
-                return "搜尋失敗，請稍後再試或調整關鍵字。"
+                return _format_search_error(exc, search_formatter)
         response = goap.respond(text)
         if config.perf_log:
             goap_ms = (time.perf_counter() - start_time) * 1000

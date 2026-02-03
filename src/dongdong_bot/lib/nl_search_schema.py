@@ -8,6 +8,7 @@ from typing import List
 class NLSearchPlan:
     is_search: bool
     topic: str
+    url: str = ""
     wants_report: bool = False
 
 
