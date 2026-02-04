@@ -53,6 +53,7 @@ class IntentClassifier:
         return top[0][0], top[0][1]
 
     def _cache_key(self) -> str:
+        # Cache key depends on model and examples to invalidate when they change.
         payload = {
             "model": self._client.model,
             "examples": [{"intent": ex.intent, "text": ex.text} for ex in self._examples],

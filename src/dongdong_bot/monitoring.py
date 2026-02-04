@@ -36,6 +36,9 @@ class Monitoring:
     def replied(self) -> None:
         self._emit("replied", "已完成回覆")
 
+    def info(self, message: str) -> None:
+        self._emit("info", message)
+
     def heartbeat(self) -> None:
         self._emit("heartbeat", "仍在運行")
 

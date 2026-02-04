@@ -49,7 +49,7 @@ python -m dongdong_bot.main
 記憶檔案會寫入：
 
 ```
-/data/data/com.termux/files/home/storage/shared/C_Dong_bot
+/data/data/com.termux/files/home/storage/shared/C_Dong_bot/memory
 ```
 
 檔名格式：

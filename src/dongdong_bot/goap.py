@@ -8,6 +8,10 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 IntentClassifierFn = Callable[[str], tuple[str | None, float]]
 INTENT_SCORE_THRESHOLD = 0.78
+INTENT_SCORE_OVERRIDES = {
+    "memory_query": 0.65,
+    "memory_save": 0.68,
+}
 
 
 @dataclass
@@ -85,6 +89,11 @@ class GoapEngine:
                         decision=decision,
                         memory_content=content,
                     )
+                return BotResponse(
+                    reply="已記住。",
+                    stop_reason=None,
+                    decision=decision,
+                )
             if decision == "memory_query":
                 return BotResponse(
                     reply="我幫你查一下。",
@@ -172,10 +181,14 @@ class GoapEngine:
     def _route_intent(self, user_text: str) -> Tuple[str, Optional[str]]:
         if self.intent_classifier is not None:
             intent, score = self.intent_classifier(user_text)
-            if intent and score >= INTENT_SCORE_THRESHOLD:
+            if intent and score >= self._intent_threshold(intent):
                 if intent in {"memory_query", "memory_save", "use_tool"}:
                     return intent, f"語意判斷:{intent}"
         return "direct_reply", None
+
+    @staticmethod
+    def _intent_threshold(intent: str) -> float:
+        return INTENT_SCORE_OVERRIDES.get(intent, INTENT_SCORE_THRESHOLD)
 
     def _is_repeating(self, history: List[StepResult]) -> bool:
         if len(history) < 2:

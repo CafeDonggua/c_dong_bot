@@ -29,10 +29,22 @@ class MemoryStore:
         self.reports_dir = self.root_dir / reports_subdir
         self.memory_dir.mkdir(parents=True, exist_ok=True)
         self.reports_dir.mkdir(parents=True, exist_ok=True)
+        self._ensure_writable(self.memory_dir)
+        self._ensure_writable(self.reports_dir)
         self.embedding_index_path = (
             Path(embedding_index_path) if embedding_index_path else self.root_dir / "embeddings.jsonl"
         )
         self._legacy_dir = self.root_dir
+
+    @staticmethod
+    def _ensure_writable(path: Path) -> None:
+        try:
+            probe = path / ".writecheck"
+            with probe.open("a", encoding="utf-8") as handle:
+                handle.write("")
+            probe.unlink(missing_ok=True)
+        except Exception as exc:
+            raise RuntimeError(f"記憶目錄不可寫入: {path}") from exc
 
     def _file_path(self, date: str) -> Path:
         return self.memory_dir / f"{date}.md"
@@ -155,6 +167,28 @@ class MemoryStore:
             seen.add(item)
             deduped.append(item)
         return deduped[:max_items]
+
+    def recent_entries(
+        self,
+        days: int = 7,
+        max_entries: int = 200,
+    ) -> List[str]:
+        today = datetime.now()
+        entries: List[str] = []
+        for offset in range(days):
+            date_str = (today - timedelta(days=offset)).strftime("%Y-%m-%d")
+            path = self._file_path(date_str)
+            legacy_path = self._legacy_dir / f"{date_str}.md"
+            for candidate in (path, legacy_path):
+                if not candidate.exists():
+                    continue
+                for line in candidate.read_text(encoding="utf-8").splitlines():
+                    if not line.strip():
+                        continue
+                    entries.append(line.lstrip("- ").strip())
+                    if len(entries) >= max_entries:
+                        return entries
+        return entries
 
     def _date_range(self, start: str, end: str) -> Iterable[str]:
         start_dt = self._parse_date(start)
