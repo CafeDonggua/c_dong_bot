@@ -162,6 +162,26 @@ def _parse_json_object(raw: str) -> dict | None:
         return None
 
 
+def _parse_json_list(raw: str) -> list[str] | None:
+    start = raw.find("[")
+    end = raw.rfind("]")
+    if start == -1 or end == -1 or end <= start:
+        return None
+    candidate = raw[start : end + 1]
+    try:
+        parsed = json.loads(candidate)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(parsed, list):
+        return None
+    cleaned = []
+    for item in parsed:
+        text = str(item).strip()
+        if text:
+            cleaned.append(text)
+    return cleaned
+
+
 def _extract_schedule_from_llm(
     llm_client: OpenAIClient,
     model: str,
@@ -233,6 +253,50 @@ def _normalize_memory_fallback(
         f"使用者輸入: {text}\n"
     )
     return llm_client.generate(model=model, prompt=prompt).strip()
+
+
+def _focus_memory_query(
+    llm_client: OpenAIClient,
+    model: str,
+    text: str,
+) -> str:
+    prompt = (
+        "你是記憶檢索的查詢重寫器。\n"
+        "請將使用者問題改寫成可用於查找記憶的精簡短語，"
+        "保留關鍵主題/人物/時間/物品，移除多餘語氣。\n"
+        "只輸出短語，不要解釋或加標點；無法改寫就原樣輸出。\n\n"
+        f"使用者問題: {text}\n"
+    )
+    raw = llm_client.generate(model=model, prompt=prompt).strip()
+    cleaned = raw.strip().strip("「」\"'`")
+    return cleaned or text.strip()
+
+
+def _summarize_memory_hits(
+    llm_client: OpenAIClient,
+    model: str,
+    question: str,
+    results: list[str],
+    max_items: int = 5,
+) -> list[str] | None:
+    if not results:
+        return []
+    prompt = (
+        "你是記憶回想整理助手。\n"
+        "根據使用者問題，從記憶清單挑選最相關的 1-3 條，必要時合併重複內容。\n"
+        "只輸出 JSON 陣列，例如 [\"...\", \"...\"]，若沒有相關內容輸出 []。\n\n"
+        f"使用者問題: {question}\n"
+        "記憶清單:\n"
+        + "\n".join(f"- {item}" for item in results)
+        + "\n"
+    )
+    raw = llm_client.generate(model=model, prompt=prompt).strip()
+    parsed = _parse_json_list(raw)
+    if parsed is None:
+        return None
+    if not parsed:
+        return []
+    return parsed[:max_items]
 
 
 def _resolve_memory_content(
@@ -613,6 +677,7 @@ def main() -> None:
                 response.reply = "記憶回想技能已停用。"
                 response.memory_query = None
             else:
+                query_text = response.memory_query.strip()
                 session = session_store.get(user_id)
                 if session and is_short_term_query(response.memory_query):
                     session_messages = session.messages[:-1] if len(session.messages) > 1 else []
@@ -624,14 +689,28 @@ def main() -> None:
                         response.reply = f"最近對話（未保存）：\n{joined}"
                         return response
                     monitoring.info("session_memory hit=0")
+                focus_query = query_text
+                try:
+                    focus_query = _focus_memory_query(
+                        llm_client, config.fast_model, query_text
+                    )
+                    if focus_query and focus_query != query_text:
+                        monitoring.info(f"memory_focus={focus_query}")
+                except Exception:
+                    monitoring.info("memory_focus_failed=1")
                 results = []
                 try:
                     query_start = time.perf_counter()
                     embedding = None
                     try:
-                        embedding = embedding_client.embed(response.memory_query)
+                        embedding = embedding_client.embed(focus_query)
                     except Exception:
                         monitoring.info("memory_embed_failed=1")
+                        if focus_query != query_text:
+                            try:
+                                embedding = embedding_client.embed(query_text)
+                            except Exception:
+                                monitoring.info("memory_embed_failed=1 original=1")
                     if embedding is not None:
                         semantic_hits = memory_store.semantic_search(embedding)
                         semantic_hits = memory_store.filter_by_score(semantic_hits)
@@ -642,17 +721,33 @@ def main() -> None:
                             start = response.memory_date_range.get("start")
                             end = response.memory_date_range.get("end")
                             if start and end:
-                                results = memory_store.query_range(response.memory_query, start, end)
+                                results = memory_store.query_range(focus_query, start, end)
                         elif response.memory_date:
-                            results = memory_store.query(response.memory_query, date=response.memory_date)
+                            results = memory_store.query(focus_query, date=response.memory_date)
                         else:
-                            results = memory_store.query(response.memory_query)
+                            results = memory_store.query(focus_query)
+                        if not results and focus_query != query_text:
+                            if response.memory_date_range:
+                                start = response.memory_date_range.get("start")
+                                end = response.memory_date_range.get("end")
+                                if start and end:
+                                    results = memory_store.query_range(query_text, start, end)
+                            elif response.memory_date:
+                                results = memory_store.query(query_text, date=response.memory_date)
+                            else:
+                                results = memory_store.query(query_text)
                         if not results:
-                            keyword_hits = _keyword_memory_fallback(
-                                response.memory_query, memory_store
-                            )
-                            if keyword_hits:
-                                results = keyword_hits
+                            try:
+                                semantic_hits, source = _semantic_memory_fallback(
+                                    focus_query,
+                                    embedding_client,
+                                    memory_store,
+                                )
+                                if semantic_hits:
+                                    results = semantic_hits
+                                    monitoring.info(f"memory_fallback={source}")
+                            except Exception:
+                                monitoring.info("memory_fallback_failed=1")
                     if config.perf_log:
                         query_ms = (time.perf_counter() - query_start) * 1000
                         monitoring.perf("memory.query", query_ms)
@@ -663,9 +758,27 @@ def main() -> None:
                     response.reply = f"{response.reply}\n\n記憶檢索暫時無法使用，請稍後再試。"
                     return response
                 if results:
-                    results = memory_store.summarize_results(results)
-                    joined = "\n".join(f"- {item}" for item in results)
-                    response.reply = f"找到的記憶：\n{joined}"
+                    candidates = memory_store.summarize_results(
+                        results, max_items=10, max_chars=160
+                    )
+                    summarized = None
+                    try:
+                        summarized = _summarize_memory_hits(
+                            llm_client,
+                            config.fast_model,
+                            query_text,
+                            candidates,
+                            max_items=5,
+                        )
+                    except Exception:
+                        monitoring.info("memory_summarize_failed=1")
+                    if summarized is None:
+                        summarized = memory_store.summarize_results(results)
+                    if summarized:
+                        joined = "\n".join(f"- {item}" for item in summarized)
+                        response.reply = f"找到的記憶：\n{joined}"
+                    else:
+                        response.reply = "找不到相關記憶。你可以告訴我想記住的內容，我幫你記下。"
                 else:
                     response.reply = "找不到相關記憶。你可以告訴我想記住的內容，我幫你記下。"
         if config.perf_log:
