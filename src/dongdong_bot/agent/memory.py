@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 import json
 from uuid import uuid4
 
+from dongdong_bot.lib.report_writer import ReportWriter
 from dongdong_bot.lib.vector_math import cosine_similarity, top_k_scored
 
 
@@ -52,9 +53,8 @@ class MemoryStore:
     def log_report(self, title: str, report_path: Path, date: str | None = None) -> Path:
         date = date or datetime.now().strftime("%Y-%m-%d")
         path = self._file_path(date)
-        relative = Path("..") / report_path.relative_to(self.root_dir)
         with path.open("a", encoding="utf-8") as handle:
-            handle.write(f"- 已整理案例：{title} ([檔案]({relative.as_posix()}))\n")
+            handle.write(ReportWriter.format_log_entry(title, report_path, self.root_dir) + "\n")
         return path
 
     def save(self, content: str, date: str | None = None) -> Path:
@@ -220,3 +220,42 @@ class MemoryStore:
             seen.add(content)
             deduped.append((content, score))
         return deduped
+
+
+SHORT_TERM_HINTS = (
+    "剛剛",
+    "剛才",
+    "前面",
+    "上一句",
+    "上句",
+    "剛剛說",
+    "剛才說",
+    "剛剛講",
+    "剛才講",
+)
+
+
+def is_short_term_query(text: str) -> bool:
+    return any(keyword in text for keyword in SHORT_TERM_HINTS)
+
+
+def search_session_messages(
+    messages: Sequence[str],
+    query: str,
+    max_items: int = 5,
+) -> List[str]:
+    if not messages:
+        return []
+    cleaned = _strip_short_term_hints(query)
+    if cleaned:
+        matched = [msg for msg in messages if cleaned in msg]
+        if matched:
+            return matched[-max_items:]
+    return list(messages)[-max_items:]
+
+
+def _strip_short_term_hints(text: str) -> str:
+    cleaned = text
+    for keyword in SHORT_TERM_HINTS:
+        cleaned = cleaned.replace(keyword, "")
+    return cleaned.strip(" ：:，,。.!？?　")

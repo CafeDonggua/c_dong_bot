@@ -231,7 +231,7 @@ class GoapEngine:
 
     @staticmethod
     def _extract_memory_content(user_text: str) -> Optional[str]:
-        for keyword in ("記住", "記下", "備忘"):
+        for keyword in ("記住", "記下", "備忘", "記得"):
             if keyword in user_text:
                 content = user_text.split(keyword, 1)[1].strip()
                 content = content.strip(" ：:，,。.!？?　")
