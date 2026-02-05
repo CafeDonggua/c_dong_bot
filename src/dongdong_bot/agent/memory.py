@@ -249,7 +249,8 @@ def search_session_messages(
     cleaned = _strip_short_term_hints(query)
     if cleaned:
         matched = [msg for msg in messages if cleaned in msg]
-        return matched[-max_items:]
+        if matched:
+            return matched[-max_items:]
     return list(messages)[-max_items:]
 
 

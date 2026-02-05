@@ -3,6 +3,7 @@ from __future__ import annotations
 import time
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 from openai import NotFoundError, OpenAI, PermissionDeniedError
 
@@ -212,18 +213,68 @@ def _memory_query_hint(
         intent, score = intent_classifier.classify(text)
         if intent == "memory_query":
             return True, f"intent_score:{score:.2f}", 0
+    if not _has_memory_keywords(text):
+        return False, "no_hint", 0
     try:
         results, source = _semantic_memory_fallback(
             text, embedding_client, memory_store, min_score=min_score
         )
     except Exception:
-        return False, "error", 0
-    return bool(results), source, len(results)
+        return True, "keyword", 0
+    return True, source if results else "keyword", len(results)
 
 
 def _is_explicit_memory_save(text: str) -> bool:
     keywords = ("記住", "記下", "備忘", "記得")
     return any(keyword in text for keyword in keywords)
+
+
+def _has_memory_keywords(text: str) -> bool:
+    keywords = (
+        "記憶",
+        "回想",
+        "回憶",
+        "記得",
+        "之前",
+        "上次",
+        "曾經",
+        "喜歡",
+        "喝什麼",
+        "吃什麼",
+        "行程",
+        "安排",
+        "待辦",
+    )
+    return any(keyword in text for keyword in keywords)
+
+
+def _preference_keyword_terms(text: str) -> list[str]:
+    if "喜歡" in text:
+        return ["喜歡"]
+    terms: list[str] = []
+    if "喝什麼" in text or "喝啥" in text:
+        terms.append("喝")
+    if "吃什麼" in text or "吃啥" in text:
+        terms.append("吃")
+    return terms
+
+
+def _keyword_memory_fallback(query: str, memory_store: MemoryStore) -> list[str]:
+    terms = _preference_keyword_terms(query)
+    if not terms:
+        return []
+    candidates = memory_store.recent_entries(days=90, max_entries=200)
+    hits = [item for item in candidates if any(term in item for term in terms)]
+    if not hits:
+        return []
+    deduped = []
+    seen = set()
+    for item in hits:
+        if item in seen:
+            continue
+        seen.add(item)
+        deduped.append(item)
+    return deduped
 
 
 def _coerce_message(payload: IncomingMessage | str) -> tuple[str, str, str, str]:
@@ -331,6 +382,43 @@ def main() -> None:
         if text.startswith("/allowlist"):
             return _handle_allowlist_command(text, allowlist_store)
 
+        if not skill_registry.is_enabled(SKILL_MEMORY_RECALL):
+            if is_short_term_query(text) or _has_memory_keywords(text):
+                return "記憶回想技能已停用。"
+
+        explicit_save = _is_explicit_memory_save(text)
+        if explicit_save and not skill_registry.is_enabled(SKILL_MEMORY_SAVE):
+            return "記憶保存技能已停用。"
+        if explicit_save and skill_registry.is_enabled(SKILL_MEMORY_SAVE):
+            response_stub = SimpleNamespace(
+                decision="memory_save",
+                memory_content=GoapEngine._extract_memory_content(text),
+            )
+            resolved_memory, _normalized = _resolve_memory_content(
+                text, response_stub, llm_client, config.fast_model, True
+            )
+            if not resolved_memory:
+                return "如果要我記住內容，請說「請記住：...」"
+            try:
+                embedding = embedding_client.embed(resolved_memory)
+                memory_store.save_with_embedding(resolved_memory, embedding)
+            except Exception:
+                memory_store.save(resolved_memory)
+            schedule_command = schedule_parser.parse(text)
+            if schedule_command and schedule_command.action == "add" and schedule_command.start_time:
+                schedule_result = schedule_service.handle(schedule_command, user_id, chat_id)
+                return f"已記住。\n\n已為你記住：{resolved_memory}\n\n{schedule_result.reply}"
+            if (
+                schedule_parser.is_schedule_hint(text)
+                and schedule_parser.has_date_hint(text)
+                and not schedule_parser.has_time_hint(text)
+            ):
+                return (
+                    f"已記住。\n\n已為你記住：{resolved_memory}\n\n"
+                    "若要加入行程，請告訴我時間，例如：明天 10:00 開會。"
+                )
+            return f"已記住。\n\n已為你記住：{resolved_memory}"
+
         if text.startswith("/search"):
             if not skill_registry.is_enabled(SKILL_SEARCH_REPORT):
                 return "搜尋整理技能已停用。"
@@ -397,24 +485,29 @@ def main() -> None:
             f" memory_content={bool(response.memory_content)}"
         )
         if response.decision in {"direct_reply", "goap"} and not response.memory_query:
-            monitoring.info(f"memory_fallback attempt decision={response.decision}")
-            if skill_registry.is_enabled(SKILL_MEMORY_RECALL):
-                try:
-                    semantic_results, source = _semantic_memory_fallback(
-                        text, embedding_client, memory_store
-                    )
-                except Exception:
-                    semantic_results, source = [], "error"
-                if semantic_results:
+            if memory_hint and skill_registry.is_enabled(SKILL_MEMORY_RECALL):
+                monitoring.info(f"memory_fallback attempt decision={response.decision}")
+                if memory_reason == "short_term":
                     response.decision = "memory_query"
                     response.memory_query = text
-                    monitoring.info(
-                        f"memory_fallback hit=1 source={source} items={len(semantic_results)}"
-                    )
+                    monitoring.info("memory_fallback hit=1 source=short_term")
                 else:
-                    monitoring.info(f"memory_fallback hit=0 source={source}")
+                    try:
+                        semantic_results, source = _semantic_memory_fallback(
+                            text, embedding_client, memory_store
+                        )
+                    except Exception:
+                        semantic_results, source = [], "error"
+                    if semantic_results:
+                        response.decision = "memory_query"
+                        response.memory_query = text
+                        monitoring.info(
+                            f"memory_fallback hit=1 source={source} items={len(semantic_results)}"
+                        )
+                    else:
+                        monitoring.info(f"memory_fallback hit=0 source={source}")
             else:
-                monitoring.info("memory_fallback skipped skill_disabled=1")
+                monitoring.info("memory_fallback skipped no_hint=1")
         if response.decision in {"direct_reply", "goap"} and not response.memory_query:
             styled = response_styler.style(response.reply, text)
             response.reply = styled.reply
@@ -455,7 +548,10 @@ def main() -> None:
             else:
                 session = session_store.get(user_id)
                 if session and is_short_term_query(response.memory_query):
-                    session_hits = search_session_messages(session.messages, response.memory_query)
+                    session_messages = session.messages[:-1] if len(session.messages) > 1 else []
+                    session_hits = search_session_messages(
+                        session_messages, response.memory_query
+                    )
                     if session_hits:
                         joined = "\n".join(f"- {item}" for item in session_hits)
                         response.reply = f"最近對話（未保存）：\n{joined}"
@@ -464,12 +560,17 @@ def main() -> None:
                 results = []
                 try:
                     query_start = time.perf_counter()
-                    embedding = embedding_client.embed(response.memory_query)
-                    semantic_hits = memory_store.semantic_search(embedding)
-                    semantic_hits = memory_store.filter_by_score(semantic_hits)
-                    if semantic_hits:
-                        results = [item for item, _score in semantic_hits]
-                    else:
+                    embedding = None
+                    try:
+                        embedding = embedding_client.embed(response.memory_query)
+                    except Exception:
+                        monitoring.info("memory_embed_failed=1")
+                    if embedding is not None:
+                        semantic_hits = memory_store.semantic_search(embedding)
+                        semantic_hits = memory_store.filter_by_score(semantic_hits)
+                        if semantic_hits:
+                            results = [item for item, _score in semantic_hits]
+                    if not results:
                         if response.memory_date_range:
                             start = response.memory_date_range.get("start")
                             end = response.memory_date_range.get("end")
@@ -479,6 +580,12 @@ def main() -> None:
                             results = memory_store.query(response.memory_query, date=response.memory_date)
                         else:
                             results = memory_store.query(response.memory_query)
+                        if not results:
+                            keyword_hits = _keyword_memory_fallback(
+                                response.memory_query, memory_store
+                            )
+                            if keyword_hits:
+                                results = keyword_hits
                     if config.perf_log:
                         query_ms = (time.perf_counter() - query_start) * 1000
                         monitoring.perf("memory.query", query_ms)
