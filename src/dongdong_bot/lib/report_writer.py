@@ -43,6 +43,11 @@ class ReportWriter:
         return path
 
     @staticmethod
+    def format_log_entry(title: str, report_path: Path, root_dir: Path) -> str:
+        relative = Path("..") / report_path.relative_to(root_dir)
+        return f"- 已整理案例：{title} ([檔案]({relative.as_posix()}))"
+
+    @staticmethod
     def _slugify(value: str) -> str:
         cleaned = re.sub(r"[\\s]+", "-", value.strip())
         cleaned = re.sub(r"[^\w\\-\\u4e00-\\u9fff]", "", cleaned)

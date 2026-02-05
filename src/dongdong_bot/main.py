@@ -2,10 +2,20 @@ from __future__ import annotations
 
 import time
 from datetime import datetime
+from pathlib import Path
 
 from openai import NotFoundError, OpenAI, PermissionDeniedError
 
+from dongdong_bot.agent.allowlist_store import AllowlistEntry, AllowlistStore
+from dongdong_bot.agent.reminder_store import ReminderStore
+from dongdong_bot.agent.schedule_parser import ScheduleParser
+from dongdong_bot.agent.schedule_service import ScheduleService
+from dongdong_bot.agent.schedule_store import ScheduleStore
+from dongdong_bot.agent.skills import SkillRegistry
+from dongdong_bot.agent.session import SessionStore
+from dongdong_bot.channels.telegram import IncomingMessage, TelegramClient
 from dongdong_bot.config import load_config
+from dongdong_bot.cron.scheduler import ReminderScheduler
 from dongdong_bot.goap import GoapEngine
 from dongdong_bot.lib.embedding_client import EmbeddingClient
 from dongdong_bot.lib.intent_classifier import IntentClassifier, IntentExample
@@ -17,8 +27,12 @@ from dongdong_bot.lib.report_writer import ReportWriter
 from dongdong_bot.lib.response_style import ResponseStyler
 from dongdong_bot.memory_store import MemoryStore
 from dongdong_bot.monitoring import Monitoring
-from dongdong_bot.telegram_client import TelegramClient
 from dongdong_bot.lib.vector_math import cosine_similarity, top_k_scored
+
+
+SKILL_MEMORY_SAVE = "memory-save"
+SKILL_MEMORY_RECALL = "memory-recall"
+SKILL_SEARCH_REPORT = "nl-search-report"
 
 
 class OpenAIClient:
@@ -82,6 +96,44 @@ def _format_search_error(
     return formatter.format_error(reason, suggestion)
 
 
+def _handle_skill_command(text: str, registry: SkillRegistry) -> str:
+    parts = text.strip().split()
+    if len(parts) == 1 or parts[1] == "list":
+        skills = registry.list_skills()
+        if not skills:
+            return "目前沒有技能清單。"
+        lines = [
+            f"- {skill.name}: {'啟用' if skill.enabled else '停用'}"
+            for skill in skills
+        ]
+        return "技能清單：\n" + "\n".join(lines)
+    if len(parts) >= 3 and parts[1] in {"enable", "disable"}:
+        target = parts[2]
+        enabled = parts[1] == "enable"
+        registry.set_enabled(target, enabled)
+        return f"技能 {target} 已{'啟用' if enabled else '停用'}。"
+    return "用法：/skill list | /skill enable <name> | /skill disable <name>"
+
+
+def _handle_allowlist_command(text: str, store: AllowlistStore) -> str:
+    parts = text.strip().split()
+    if len(parts) == 1 or parts[1] == "list":
+        entries = store.list_entries()
+        if not entries:
+            return "允許名單目前為空。"
+        lines = [f"- {entry.user_id} ({entry.channel_type})" for entry in entries]
+        return "允許名單：\n" + "\n".join(lines)
+    if len(parts) >= 3 and parts[1] in {"add", "remove"}:
+        user_id = parts[2]
+        channel = parts[3] if len(parts) >= 4 else "telegram"
+        if parts[1] == "add":
+            store.add(AllowlistEntry(user_id=user_id, channel_type=channel))
+            return f"已加入允許名單：{user_id} ({channel})"
+        store.remove(user_id, channel)
+        return f"已移除允許名單：{user_id} ({channel})"
+    return "用法：/allowlist list | /allowlist add <user_id> [channel] | /allowlist remove <user_id> [channel]"
+
+
 def _semantic_memory_fallback(
     text: str,
     embedding_client: EmbeddingClient,
@@ -129,7 +181,10 @@ def _resolve_memory_content(
     response,
     llm_client: OpenAIClient,
     model: str,
+    explicit_save: bool,
 ) -> tuple[str | None, bool]:
+    if not explicit_save:
+        return None, False
     if response.memory_content:
         return response.memory_content.strip(), False
     if response.decision == "memory_save":
@@ -162,6 +217,21 @@ def _memory_query_hint(
     except Exception:
         return False, "error", 0
     return bool(results), source, len(results)
+
+
+def _is_explicit_memory_save(text: str) -> bool:
+    keywords = ("記住", "記下", "備忘", "記得")
+    return any(keyword in text for keyword in keywords)
+
+
+def _coerce_message(payload: IncomingMessage | str) -> tuple[str, str, str, str]:
+    if isinstance(payload, IncomingMessage):
+        text = payload.text
+        user_id = payload.user_id or "default"
+        chat_id = payload.chat_id or user_id
+        channel = payload.channel
+        return text, user_id, chat_id, channel
+    return str(payload), "local", "local", "local"
 
 
 def main() -> None:
@@ -227,26 +297,62 @@ def main() -> None:
         config.memory_dir,
         embedding_index_path=config.embedding_index_path,
     )
+    schedule_store = ScheduleStore(config.schedules_path)
+    reminder_store = ReminderStore(config.reminders_path)
+    schedule_parser = ScheduleParser()
+    schedule_service = ScheduleService(schedule_store, reminder_store)
+    scheduler = ReminderScheduler(schedule_store, reminder_store)
+    session_store = SessionStore()
+    skills_dir = Path(__file__).resolve().parents[2] / "skills"
+    skill_registry = SkillRegistry(
+        skills_dir=str(skills_dir),
+        state_path=config.skills_state_path,
+    )
+    allowlist_store = AllowlistStore(config.allowlist_path)
+
     monitoring.info(
         f"memory_dir={memory_store.memory_dir} reports_dir={memory_store.reports_dir}"
     )
-    telegram = TelegramClient(config.telegram_bot_token, monitoring, perf_log=config.perf_log)
 
-    def handle_text(text: str):
+    def handle_message(payload: IncomingMessage | str):
         start_time = time.perf_counter()
+        text, user_id, chat_id, channel = _coerce_message(payload)
+        session_store.touch(user_id, text)
+
+        command = schedule_parser.parse(text)
+        if command:
+            result = schedule_service.handle(command, user_id, chat_id)
+            return result.reply
+
+        if text.startswith("/skill"):
+            return _handle_skill_command(text, skill_registry)
+        if text.startswith("/allowlist"):
+            return _handle_allowlist_command(text, allowlist_store)
+
         if text.startswith("/search"):
+            if not skill_registry.is_enabled(SKILL_SEARCH_REPORT):
+                return "搜尋整理技能已停用。"
             return _handle_search_command(text, search_client, search_formatter, monitoring)
         if text.startswith("/summary"):
+            if not skill_registry.is_enabled(SKILL_SEARCH_REPORT):
+                return "搜尋整理技能已停用。"
             return _handle_summary_command(text, search_client, search_formatter, monitoring)
+
         plan = nl_topic.extract(text)
-        memory_hint, memory_reason, memory_hits = _memory_query_hint(
-            text, intent_classifier, embedding_client, memory_store
-        )
+        memory_hint = False
+        memory_reason = ""
+        memory_hits = 0
+        if skill_registry.is_enabled(SKILL_MEMORY_RECALL):
+            memory_hint, memory_reason, memory_hits = _memory_query_hint(
+                text, intent_classifier, embedding_client, memory_store
+            )
         if plan.is_search and memory_hint:
             monitoring.info(
                 f"memory_hint=1 bypass_search=1 reason={memory_reason} hits={memory_hits}"
             )
         if plan.is_search and (plan.topic or plan.url) and not memory_hint:
+            if not skill_registry.is_enabled(SKILL_SEARCH_REPORT):
+                return "搜尋整理技能已停用。"
             monitoring.info("memory_hint=0 search_path=1")
             try:
                 if plan.url:
@@ -272,7 +378,17 @@ def main() -> None:
             except Exception as exc:
                 monitoring.error(exc)
                 return _format_search_error(exc, search_formatter)
+
         response = goap.respond(text)
+        if response.decision == "memory_save" and not skill_registry.is_enabled(SKILL_MEMORY_SAVE):
+            response.reply = "記憶保存技能已停用。"
+            response.memory_content = None
+            response.decision = "direct_reply"
+        if response.decision == "memory_query" and not skill_registry.is_enabled(SKILL_MEMORY_RECALL):
+            response.reply = "記憶回想技能已停用。"
+            response.memory_query = None
+            response.decision = "direct_reply"
+
         monitoring.info(
             "goap_decision="
             f"{response.decision} memory_query={bool(response.memory_query)}"
@@ -280,29 +396,38 @@ def main() -> None:
         )
         if response.decision in {"direct_reply", "goap"} and not response.memory_query:
             monitoring.info(f"memory_fallback attempt decision={response.decision}")
-            try:
-                semantic_results, source = _semantic_memory_fallback(
-                    text, embedding_client, memory_store
-                )
-            except Exception:
-                semantic_results, source = [], "error"
-            if semantic_results:
-                response.decision = "memory_query"
-                response.memory_query = text
-                monitoring.info(
-                    f"memory_fallback hit=1 source={source} items={len(semantic_results)}"
-                )
+            if skill_registry.is_enabled(SKILL_MEMORY_RECALL):
+                try:
+                    semantic_results, source = _semantic_memory_fallback(
+                        text, embedding_client, memory_store
+                    )
+                except Exception:
+                    semantic_results, source = [], "error"
+                if semantic_results:
+                    response.decision = "memory_query"
+                    response.memory_query = text
+                    monitoring.info(
+                        f"memory_fallback hit=1 source={source} items={len(semantic_results)}"
+                    )
+                else:
+                    monitoring.info(f"memory_fallback hit=0 source={source}")
             else:
-                monitoring.info(f"memory_fallback hit=0 source={source}")
+                monitoring.info("memory_fallback skipped skill_disabled=1")
         if response.decision in {"direct_reply", "goap"} and not response.memory_query:
             styled = response_styler.style(response.reply, text)
             response.reply = styled.reply
         if config.perf_log:
             goap_ms = (time.perf_counter() - start_time) * 1000
             monitoring.perf("handle_text.goap", goap_ms, f"decision={response.decision}")
-        resolved_memory, normalized = _resolve_memory_content(
-            text, response, llm_client, config.fast_model
-        )
+        resolved_memory, normalized = (None, False)
+        if skill_registry.is_enabled(SKILL_MEMORY_SAVE):
+            explicit_save = _is_explicit_memory_save(text)
+            resolved_memory, normalized = _resolve_memory_content(
+                text, response, llm_client, config.fast_model, explicit_save
+            )
+            if response.decision == "memory_save" and not resolved_memory:
+                response.reply = "如果要我記住內容，請說「請記住：...」"
+                response.decision = "direct_reply"
         if resolved_memory:
             if response.decision == "memory_save":
                 response.reply = "已記住。"
@@ -322,45 +447,59 @@ def main() -> None:
                 monitoring.perf("memory.save", mem_ms)
             response.reply = f"{response.reply}\n\n已為你記住：{resolved_memory}"
         if response.memory_query:
-            results = []
-            try:
-                query_start = time.perf_counter()
-                embedding = embedding_client.embed(response.memory_query)
-                semantic_hits = memory_store.semantic_search(embedding)
-                semantic_hits = memory_store.filter_by_score(semantic_hits)
-                if semantic_hits:
-                    results = [item for item, _score in semantic_hits]
-                else:
-                    if response.memory_date_range:
-                        start = response.memory_date_range.get("start")
-                        end = response.memory_date_range.get("end")
-                        if start and end:
-                            results = memory_store.query_range(response.memory_query, start, end)
-                    elif response.memory_date:
-                        results = memory_store.query(response.memory_query, date=response.memory_date)
-                    else:
-                        results = memory_store.query(response.memory_query)
-                if config.perf_log:
-                    query_ms = (time.perf_counter() - query_start) * 1000
-                    monitoring.perf("memory.query", query_ms)
-            except ValueError:
-                response.reply = f"{response.reply}\n\n日期格式不正確，請使用 YYYY-MM-DD。"
-                return response
-            except Exception:
-                response.reply = f"{response.reply}\n\n記憶檢索暫時無法使用，請稍後再試。"
-                return response
-            if results:
-                results = memory_store.summarize_results(results)
-                joined = "\n".join(f"- {item}" for item in results)
-                response.reply = f"找到的記憶：\n{joined}"
+            if not skill_registry.is_enabled(SKILL_MEMORY_RECALL):
+                response.reply = "記憶回想技能已停用。"
+                response.memory_query = None
             else:
-                response.reply = "找不到相關記憶。你可以告訴我想記住的內容，我幫你記下。"
+                results = []
+                try:
+                    query_start = time.perf_counter()
+                    embedding = embedding_client.embed(response.memory_query)
+                    semantic_hits = memory_store.semantic_search(embedding)
+                    semantic_hits = memory_store.filter_by_score(semantic_hits)
+                    if semantic_hits:
+                        results = [item for item, _score in semantic_hits]
+                    else:
+                        if response.memory_date_range:
+                            start = response.memory_date_range.get("start")
+                            end = response.memory_date_range.get("end")
+                            if start and end:
+                                results = memory_store.query_range(response.memory_query, start, end)
+                        elif response.memory_date:
+                            results = memory_store.query(response.memory_query, date=response.memory_date)
+                        else:
+                            results = memory_store.query(response.memory_query)
+                    if config.perf_log:
+                        query_ms = (time.perf_counter() - query_start) * 1000
+                        monitoring.perf("memory.query", query_ms)
+                except ValueError:
+                    response.reply = f"{response.reply}\n\n日期格式不正確，請使用 YYYY-MM-DD。"
+                    return response
+                except Exception:
+                    response.reply = f"{response.reply}\n\n記憶檢索暫時無法使用，請稍後再試。"
+                    return response
+                if results:
+                    results = memory_store.summarize_results(results)
+                    joined = "\n".join(f"- {item}" for item in results)
+                    response.reply = f"找到的記憶：\n{joined}"
+                else:
+                    response.reply = "找不到相關記憶。你可以告訴我想記住的內容，我幫你記下。"
         if config.perf_log:
             total_ms = (time.perf_counter() - start_time) * 1000
             monitoring.perf("handle_text.total", total_ms)
         return response
 
-    telegram.start(handle_text)
+    def allowlist_checker(message: IncomingMessage) -> bool:
+        return allowlist_store.is_allowed(message.user_id, message.channel)
+
+    telegram = TelegramClient(
+        config.telegram_bot_token,
+        monitoring,
+        perf_log=config.perf_log,
+        allowlist_checker=allowlist_checker,
+        scheduler=scheduler,
+    )
+    telegram.start(handle_message)
 
 
 if __name__ == "__main__":
