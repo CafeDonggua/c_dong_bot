@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 from datetime import datetime
+import json
 from pathlib import Path
 
 from openai import NotFoundError, OpenAI, PermissionDeniedError
@@ -147,6 +148,49 @@ def _handle_allowlist_command(text: str, store: AllowlistStore) -> str:
 def _append_decision_note(reply: str, capability: str) -> str:
     label = DECISION_LABELS.get(capability, "一般回覆")
     return f"【{label}】{reply}"
+
+
+def _parse_json_object(raw: str) -> dict | None:
+    start = raw.find("{")
+    end = raw.rfind("}")
+    if start == -1 or end == -1 or end <= start:
+        return None
+    candidate = raw[start : end + 1]
+    try:
+        return json.loads(candidate)
+    except json.JSONDecodeError:
+        return None
+
+
+def _extract_schedule_from_llm(
+    llm_client: OpenAIClient,
+    model: str,
+    user_text: str,
+    now: datetime,
+) -> ScheduleCommand | None:
+    prompt = (
+        "你是行程資訊擷取器，請從使用者輸入中提取行程時間與內容。\n"
+        "請只輸出單行 JSON，欄位包含: datetime, title。\n"
+        "datetime 格式為 YYYY-MM-DD HH:MM（24 小時制），若無法判斷請輸出空字串。\n"
+        "title 為行程內容的精簡描述，若無法判斷可輸出空字串。\n"
+        f"目前時間: {now.strftime('%Y-%m-%d %H:%M')}\n"
+        f"使用者輸入: {user_text}\n"
+    )
+    raw = llm_client.generate(model=model, prompt=prompt)
+    parsed = _parse_json_object(raw.strip()) if raw else None
+    if not parsed:
+        return None
+    dt_raw = str(parsed.get("datetime", "") or "").strip()
+    title = str(parsed.get("title", "") or "").strip()
+    if not dt_raw:
+        return None
+    try:
+        start_time = datetime.strptime(dt_raw, "%Y-%m-%d %H:%M")
+    except ValueError:
+        return None
+    if not title:
+        title = "行程"
+    return ScheduleCommand(action="add", title=title, start_time=start_time)
 
 
 def _semantic_memory_fallback(
@@ -421,6 +465,15 @@ def main() -> None:
             if command and command.action == "add" and command.start_time:
                 result = schedule_service.handle(command, user_id, chat_id)
                 return _append_decision_note(result.reply, decision.capability)
+            llm_command = _extract_schedule_from_llm(
+                llm_client=llm_client,
+                model=config.fast_model,
+                user_text=text,
+                now=datetime.now(),
+            )
+            if llm_command:
+                result = schedule_service.handle(llm_command, user_id, chat_id)
+                return _append_decision_note(result.reply, decision.capability)
             return _append_decision_note(
                 intent_router.build_clarification_question(decision),
                 decision.capability,
@@ -438,18 +491,22 @@ def main() -> None:
             if not skill_registry.is_enabled(SKILL_SEARCH_REPORT):
                 return _append_decision_note("搜尋整理技能已停用。", decision.capability)
             plan = nl_topic.extract(text)
-            if not plan.is_search or not (plan.topic or plan.url):
+            topic = plan.topic.strip() if plan.topic else ""
+            url = plan.url.strip() if plan.url else ""
+            if not topic and not url:
+                topic = text.strip()
+            if not topic and not url:
                 return _append_decision_note(
                     intent_router.build_clarification_question(decision),
                     decision.capability,
                 )
             try:
-                if plan.url:
-                    response = search_client.summarize_link(plan.url)
+                if url:
+                    response = search_client.summarize_link(url)
                 else:
-                    response = search_client.search_keyword(plan.topic)
+                    response = search_client.search_keyword(topic)
                 if plan.wants_report:
-                    title = plan.topic or plan.url
+                    title = topic or url
                     normalized = normalize_report_content(
                         response,
                         reason="找不到相關結果或來源內容不足",
