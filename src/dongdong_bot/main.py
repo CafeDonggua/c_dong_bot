@@ -13,10 +13,10 @@ from dongdong_bot.agent.schedule_service import ScheduleService
 from dongdong_bot.agent.schedule_store import ScheduleStore
 from dongdong_bot.agent.skills import SkillRegistry
 from dongdong_bot.agent.session import SessionStore
+from dongdong_bot.agent.loop import GoapEngine
 from dongdong_bot.channels.telegram import IncomingMessage, TelegramClient
 from dongdong_bot.config import load_config
 from dongdong_bot.cron.scheduler import ReminderScheduler
-from dongdong_bot.goap import GoapEngine
 from dongdong_bot.lib.embedding_client import EmbeddingClient
 from dongdong_bot.lib.intent_classifier import IntentClassifier, IntentExample
 from dongdong_bot.lib.search_client import SearchClient
@@ -25,7 +25,7 @@ from dongdong_bot.lib.nl_search_topic import NLSearchTopicExtractor
 from dongdong_bot.lib.report_content import normalize_report_content
 from dongdong_bot.lib.report_writer import ReportWriter
 from dongdong_bot.lib.response_style import ResponseStyler
-from dongdong_bot.memory_store import MemoryStore
+from dongdong_bot.agent.memory import MemoryStore
 from dongdong_bot.monitoring import Monitoring
 from dongdong_bot.lib.vector_math import cosine_similarity, top_k_scored
 

@@ -13,6 +13,12 @@
 - 技能啟用/停用：支援基本技能控管
 - 允許名單：可限制可使用聊天助理的帳號
 
+## 架構概覽
+
+- `src/dongdong_bot/agent/`：對話決策、記憶、技能、行程與允許名單
+- `src/dongdong_bot/channels/`：聊天通道整合（目前為 Telegram）
+- `src/dongdong_bot/cron/`：提醒與排程觸發
+
 ## 環境需求
 
 - Python 3.12
