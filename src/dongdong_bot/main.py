@@ -407,21 +407,24 @@ def main() -> None:
             return _handle_summary_command(text, search_client, search_formatter, monitoring)
 
         decision = intent_router.route(text)
-        if decision.needs_clarification:
+        monitoring.info(
+            "router_decision="
+            f"{decision.capability} missing={decision.missing_inputs} "
+            f"clarify={decision.needs_clarification} confidence={decision.confidence:.2f}"
+        )
+        should_clarify = decision.needs_clarification
+        if decision.capability in {"memory_query", "schedule_list"} and text.strip():
+            should_clarify = False
+
+        if decision.capability == "schedule_add":
+            command = schedule_parser.parse(text)
+            if command and command.action == "add" and command.start_time:
+                result = schedule_service.handle(command, user_id, chat_id)
+                return _append_decision_note(result.reply, decision.capability)
             return _append_decision_note(
                 intent_router.build_clarification_question(decision),
                 decision.capability,
             )
-
-        if decision.capability == "schedule_add":
-            command = schedule_parser.parse(text)
-            if not command:
-                return _append_decision_note(
-                    intent_router.build_clarification_question(decision),
-                    decision.capability,
-                )
-            result = schedule_service.handle(command, user_id, chat_id)
-            return _append_decision_note(result.reply, decision.capability)
 
         if decision.capability == "schedule_list":
             result = schedule_service.handle(
@@ -473,6 +476,12 @@ def main() -> None:
                     _format_search_error(exc, search_formatter),
                     decision.capability,
                 )
+
+        if should_clarify:
+            return _append_decision_note(
+                intent_router.build_clarification_question(decision),
+                decision.capability,
+            )
 
         forced_decision = None
         if decision.capability in {"memory_save", "memory_query", "direct_reply"}:

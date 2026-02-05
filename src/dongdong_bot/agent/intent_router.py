@@ -81,6 +81,7 @@ class IntentRouter:
             "capability 必須是以下之一: "
             f"{capability_names}\n"
             "missing_inputs 為缺少的必要資訊列表，若無缺少請填空陣列。\n"
+            "missing_inputs 僅能從該能力的 required_inputs 中選擇。\n"
             "needs_clarification 為布林值，當意圖不明確或有缺少資訊時設為 true。\n"
             "confidence 為 0~1 之間的小數。\n\n"
             "可用功能清單:\n"
