@@ -39,6 +39,7 @@ class SearchClient:
     def _request_json(self, system_prompt: str, user_input: str) -> SearchResponse:
         content = ""
         last_error: Exception | None = None
+        last_response: Any | None = None
         for model in [self.model, *self._fallback_models]:
             try:
                 response = self._client.responses.create(
@@ -50,6 +51,7 @@ class SearchClient:
                     ],
                 )
                 content = response.output_text or ""
+                last_response = response
                 last_error = None
                 break
             except (NotFoundError, PermissionDeniedError) as exc:
@@ -58,12 +60,21 @@ class SearchClient:
         if last_error is not None:
             raise last_error
         parsed = self._parse_json(content)
-        if parsed is None:
-            return SearchResponse(summary="", bullets=[], sources=[], raw_text=content)
+        summary = ""
+        bullets: list[str] = []
+        sources: list[str] = []
+        if parsed is not None:
+            summary = str(parsed.get("summary", "") or "")
+            bullets = [str(item) for item in parsed.get("bullets", []) if item]
+            sources = [str(item) for item in parsed.get("sources", []) if item]
+        if not sources:
+            sources = self._extract_sources(content)
+        if not sources and last_response is not None:
+            sources = self._extract_sources_from_response(last_response)
         return SearchResponse(
-            summary=str(parsed.get("summary", "") or ""),
-            bullets=[str(item) for item in parsed.get("bullets", []) if item],
-            sources=[str(item) for item in parsed.get("sources", []) if item],
+            summary=summary,
+            bullets=bullets,
+            sources=sources,
             raw_text=content,
         )
 
@@ -118,3 +129,30 @@ class SearchClient:
         if not raw:
             return []
         return [item.strip() for item in raw.split(",") if item.strip()]
+
+    @staticmethod
+    def _extract_sources(content: str) -> list[str]:
+        if not content:
+            return []
+        urls: list[str] = []
+        for url in re.findall(r"\((https?://[^)\s]+)\)", content):
+            urls.append(url)
+        for url in re.findall(r"https?://\\S+", content):
+            urls.append(url)
+        cleaned: list[str] = []
+        seen = set()
+        for url in urls:
+            trimmed = url.rstrip(").,;]}>\"'")
+            if trimmed and trimmed not in seen:
+                seen.add(trimmed)
+                cleaned.append(trimmed)
+        return cleaned
+
+    @staticmethod
+    def _extract_sources_from_response(response: Any) -> list[str]:
+        try:
+            payload = response.model_dump()
+        except Exception:
+            return []
+        blob = json.dumps(payload, ensure_ascii=False)
+        return SearchClient._extract_sources(blob)
