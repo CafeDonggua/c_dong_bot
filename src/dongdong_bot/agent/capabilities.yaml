@@ -1,4 +1,5 @@
 {
+  "_comment": "新增能力時：加入 capabilities 新項目，提供 name/description/required_inputs/example_requests/clarifications。",
   "capabilities": [
     {
       "name": "schedule_add",
