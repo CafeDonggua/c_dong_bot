@@ -1,0 +1,79 @@
+{
+  "capabilities": [
+    {
+      "name": "schedule_add",
+      "description": "建立提醒或行程，需包含時間與內容。",
+      "required_inputs": ["datetime", "title"],
+      "example_requests": [
+        "明天早上九點提醒我開會",
+        "後天 14:30 幫我安排看醫生",
+        "今天晚上七點提醒我運動"
+      ],
+      "clarifications": {
+        "datetime": "請問要提醒的時間是什麼時候？",
+        "title": "請問要提醒的內容是什麼？"
+      }
+    },
+    {
+      "name": "schedule_list",
+      "description": "查詢目前已排定的行程清單。",
+      "required_inputs": [],
+      "example_requests": [
+        "我有哪些行程",
+        "行程列表",
+        "最近有哪些安排"
+      ],
+      "clarifications": {}
+    },
+    {
+      "name": "memory_save",
+      "description": "保存使用者想要記住的資訊。",
+      "required_inputs": ["content"],
+      "example_requests": [
+        "我喜歡無糖拿鐵",
+        "請記住我的生日是 8 月 10 日",
+        "我有一支衣索比亞烏拉嘎蘇克的咖啡豆"
+      ],
+      "clarifications": {
+        "content": "你希望我記住哪一件事？"
+      }
+    },
+    {
+      "name": "memory_query",
+      "description": "查詢已記住的資訊或近期對話記憶。",
+      "required_inputs": ["query"],
+      "example_requests": [
+        "我之前說過什麼喜好",
+        "我的行程是什麼",
+        "我剛剛讓你記住了什麼"
+      ],
+      "clarifications": {
+        "query": "你想回想哪一件事？"
+      }
+    },
+    {
+      "name": "search_report",
+      "description": "搜尋或整理外部資訊並摘要回覆。",
+      "required_inputs": ["topic_or_url"],
+      "example_requests": [
+        "幫我整理台灣能源政策",
+        "摘要這篇文章 https://example.com",
+        "找一下最近的 AI 新聞"
+      ],
+      "clarifications": {
+        "topic_or_url": "請提供要搜尋的主題或連結。"
+      }
+    },
+    {
+      "name": "direct_reply",
+      "description": "一般對話或不需要執行特定功能的回覆。",
+      "required_inputs": [],
+      "example_requests": [
+        "你好",
+        "你可以做什麼",
+        "謝謝"
+      ],
+      "clarifications": {}
+    }
+  ]
+}

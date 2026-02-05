@@ -19,6 +19,22 @@
 - `src/dongdong_bot/channels/`：聊天通道整合（目前為 Telegram）
 - `src/dongdong_bot/cron/`：提醒與排程觸發
 
+## 語意路由（能力描述式）
+
+語意路由改以能力描述進行判斷，能力清單位於：
+
+- `src/dongdong_bot/agent/capabilities.yaml`
+
+目前檔案內容為 JSON（YAML 相容），新增功能時請新增一筆能力描述，欄位包含：
+
+- `name`：能力名稱（需唯一）
+- `description`：能力說明
+- `required_inputs`：必要輸入欄位
+- `example_requests`：自然語言範例
+- `clarifications`：缺少必要資訊時的澄清提問
+
+新增後用自然語言測試（不需加入關鍵字清單）。
+
 ## 環境需求
 
 - Python 3.12

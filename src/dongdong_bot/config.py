@@ -18,6 +18,7 @@ ALLOWLIST_FILENAME = "allowlist.json"
 SCHEDULES_FILENAME = "schedules.json"
 REMINDERS_FILENAME = "reminders.json"
 SKILLS_STATE_FILENAME = "skills_state.json"
+CAPABILITIES_FILENAME = "capabilities.yaml"
 MEMORY_SUBDIR = "memory"
 REPORTS_SUBDIR = "reports"
 HEARTBEAT_INTERVAL_SECONDS = 30 * 60
@@ -25,6 +26,7 @@ ERROR_THROTTLE_SECONDS = 60
 PERF_LOG_ENV = "PERF_LOG"
 EMBEDDING_KEY_ENV = "OPENAI_EMBEDDING_KEY"
 SEARCH_KEY_ENV = "OPENAI_SEARCH_API_KEY"
+CAPABILITIES_PATH = str(Path(__file__).resolve().parent / "agent" / CAPABILITIES_FILENAME)
 
 
 @dataclass(frozen=True)
@@ -44,6 +46,7 @@ class Config:
     schedules_path: str = str(Path(MEMORY_DIR) / SCHEDULES_FILENAME)
     reminders_path: str = str(Path(MEMORY_DIR) / REMINDERS_FILENAME)
     skills_state_path: str = str(Path(MEMORY_DIR) / SKILLS_STATE_FILENAME)
+    capabilities_path: str = CAPABILITIES_PATH
     search_api_key: str = ""
     search_model: str = SEARCH_MODEL
     heartbeat_interval_seconds: int = HEARTBEAT_INTERVAL_SECONDS

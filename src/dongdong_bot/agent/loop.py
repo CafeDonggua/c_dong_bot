@@ -65,56 +65,25 @@ class GoapEngine:
         self.json_retry_limit = json_retry_limit
         self.perf_log = perf_log
 
-    def respond(self, user_text: str) -> BotResponse:
+    def respond(
+        self,
+        user_text: str,
+        forced_decision: str | None = None,
+        forced_reason: str | None = None,
+    ) -> BotResponse:
         start_time = time.perf_counter()
-        if self.shortcuts_enabled:
+        decision: str
+        reason: Optional[str]
+        if forced_decision:
+            decision, reason = forced_decision, forced_reason
+            shortcut = self._shortcut_response(user_text, decision, reason, start_time)
+            if shortcut is not None:
+                return shortcut
+        elif self.shortcuts_enabled:
             decision, reason = self._route_intent(user_text)
-            if self._should_direct_reply(user_text, decision):
-                reply = self._direct_reply(user_text)
-                if self.perf_log:
-                    elapsed_ms = (time.perf_counter() - start_time) * 1000
-                    print(f"[perf] goap.direct_reply total_ms={elapsed_ms:.1f}")
-                return BotResponse(
-                    reply=reply,
-                    stop_reason=None,
-                    decision="direct_reply",
-                    tool_reason=reason,
-                )
-            if decision == "memory_save":
-                content = self._extract_memory_content(user_text)
-                if content:
-                    return BotResponse(
-                        reply="已記住。",
-                        stop_reason=None,
-                        decision=decision,
-                        memory_content=content,
-                    )
-                return BotResponse(
-                    reply="已記住。",
-                    stop_reason=None,
-                    decision=decision,
-                )
-            if decision == "memory_query":
-                return BotResponse(
-                    reply="我幫你查一下。",
-                    stop_reason=None,
-                    decision=decision,
-                    memory_query=user_text.strip(),
-                )
-            if decision == "use_tool":
-                reply = (
-                    "這個問題需要即時工具或外部資料，但目前工具尚未啟用。"
-                    "若你希望我改用一般知識回答，請告訴我。"
-                )
-                if self.perf_log:
-                    elapsed_ms = (time.perf_counter() - start_time) * 1000
-                    print(f"[perf] goap.tool_stub total_ms={elapsed_ms:.1f}")
-                return BotResponse(
-                    reply=reply,
-                    stop_reason=None,
-                    decision=decision,
-                    tool_reason=reason,
-                )
+            shortcut = self._shortcut_response(user_text, decision, reason, start_time)
+            if shortcut is not None:
+                return shortcut
         else:
             decision, reason = "goap", None
 
@@ -174,6 +143,61 @@ class GoapEngine:
             elapsed_ms = (time.perf_counter() - start_time) * 1000
             print(f"[perf] goap.respond total_ms={elapsed_ms:.1f}")
         return response
+
+    def _shortcut_response(
+        self,
+        user_text: str,
+        decision: str,
+        reason: Optional[str],
+        start_time: float,
+    ) -> Optional[BotResponse]:
+        if self._should_direct_reply(user_text, decision):
+            reply = self._direct_reply(user_text)
+            if self.perf_log:
+                elapsed_ms = (time.perf_counter() - start_time) * 1000
+                print(f"[perf] goap.direct_reply total_ms={elapsed_ms:.1f}")
+            return BotResponse(
+                reply=reply,
+                stop_reason=None,
+                decision="direct_reply",
+                tool_reason=reason,
+            )
+        if decision == "memory_save":
+            content = self._extract_memory_content(user_text)
+            if content:
+                return BotResponse(
+                    reply="已記住。",
+                    stop_reason=None,
+                    decision=decision,
+                    memory_content=content,
+                )
+            return BotResponse(
+                reply="已記住。",
+                stop_reason=None,
+                decision=decision,
+            )
+        if decision == "memory_query":
+            return BotResponse(
+                reply="我幫你查一下。",
+                stop_reason=None,
+                decision=decision,
+                memory_query=user_text.strip(),
+            )
+        if decision == "use_tool":
+            reply = (
+                "這個問題需要即時工具或外部資料，但目前工具尚未啟用。"
+                "若你希望我改用一般知識回答，請告訴我。"
+            )
+            if self.perf_log:
+                elapsed_ms = (time.perf_counter() - start_time) * 1000
+                print(f"[perf] goap.tool_stub total_ms={elapsed_ms:.1f}")
+            return BotResponse(
+                reply=reply,
+                stop_reason=None,
+                decision=decision,
+                tool_reason=reason,
+            )
+        return None
 
     def _should_direct_reply(self, user_text: str, decision: str) -> bool:
         return decision == "direct_reply"

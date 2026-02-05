@@ -3,13 +3,14 @@ from __future__ import annotations
 import time
 from datetime import datetime
 from pathlib import Path
-from types import SimpleNamespace
 
 from openai import NotFoundError, OpenAI, PermissionDeniedError
 
 from dongdong_bot.agent.allowlist_store import AllowlistEntry, AllowlistStore
+from dongdong_bot.agent.capability_catalog import CapabilityCatalog
+from dongdong_bot.agent.intent_router import IntentRouter
 from dongdong_bot.agent.reminder_store import ReminderStore
-from dongdong_bot.agent.schedule_parser import ScheduleParser
+from dongdong_bot.agent.schedule_parser import ScheduleCommand, ScheduleParser
 from dongdong_bot.agent.schedule_service import ScheduleService
 from dongdong_bot.agent.schedule_store import ScheduleStore
 from dongdong_bot.agent.skills import SkillRegistry
@@ -34,6 +35,14 @@ from dongdong_bot.lib.vector_math import cosine_similarity, top_k_scored
 SKILL_MEMORY_SAVE = "memory-save"
 SKILL_MEMORY_RECALL = "memory-recall"
 SKILL_SEARCH_REPORT = "nl-search-report"
+DECISION_LABELS = {
+    "schedule_add": "行程提醒",
+    "schedule_list": "行程查詢",
+    "memory_save": "記憶保存",
+    "memory_query": "記憶回想",
+    "search_report": "搜尋整理",
+    "direct_reply": "一般回覆",
+}
 
 
 class OpenAIClient:
@@ -133,6 +142,11 @@ def _handle_allowlist_command(text: str, store: AllowlistStore) -> str:
         store.remove(user_id, channel)
         return f"已移除允許名單：{user_id} ({channel})"
     return "用法：/allowlist list | /allowlist add <user_id> [channel] | /allowlist remove <user_id> [channel]"
+
+
+def _append_decision_note(reply: str, capability: str) -> str:
+    label = DECISION_LABELS.get(capability, "一般回覆")
+    return f"【{label}】{reply}"
 
 
 def _semantic_memory_fallback(
@@ -362,6 +376,12 @@ def main() -> None:
         state_path=config.skills_state_path,
     )
     allowlist_store = AllowlistStore(config.allowlist_path)
+    capability_catalog = CapabilityCatalog(config.capabilities_path)
+    intent_router = IntentRouter(
+        generate=llm_client.generate,
+        model=config.fast_model,
+        catalog=capability_catalog,
+    )
 
     monitoring.info(
         f"memory_dir={memory_store.memory_dir} reports_dir={memory_store.reports_dir}"
@@ -372,52 +392,10 @@ def main() -> None:
         text, user_id, chat_id, channel = _coerce_message(payload)
         session_store.touch(user_id, text)
 
-        command = schedule_parser.parse(text)
-        if command:
-            result = schedule_service.handle(command, user_id, chat_id)
-            return result.reply
-
         if text.startswith("/skill"):
             return _handle_skill_command(text, skill_registry)
         if text.startswith("/allowlist"):
             return _handle_allowlist_command(text, allowlist_store)
-
-        if not skill_registry.is_enabled(SKILL_MEMORY_RECALL):
-            if is_short_term_query(text) or _has_memory_keywords(text):
-                return "記憶回想技能已停用。"
-
-        explicit_save = _is_explicit_memory_save(text)
-        if explicit_save and not skill_registry.is_enabled(SKILL_MEMORY_SAVE):
-            return "記憶保存技能已停用。"
-        if explicit_save and skill_registry.is_enabled(SKILL_MEMORY_SAVE):
-            response_stub = SimpleNamespace(
-                decision="memory_save",
-                memory_content=GoapEngine._extract_memory_content(text),
-            )
-            resolved_memory, _normalized = _resolve_memory_content(
-                text, response_stub, llm_client, config.fast_model, True
-            )
-            if not resolved_memory:
-                return "如果要我記住內容，請說「請記住：...」"
-            try:
-                embedding = embedding_client.embed(resolved_memory)
-                memory_store.save_with_embedding(resolved_memory, embedding)
-            except Exception:
-                memory_store.save(resolved_memory)
-            schedule_command = schedule_parser.parse(text)
-            if schedule_command and schedule_command.action == "add" and schedule_command.start_time:
-                schedule_result = schedule_service.handle(schedule_command, user_id, chat_id)
-                return f"已記住。\n\n已為你記住：{resolved_memory}\n\n{schedule_result.reply}"
-            if (
-                schedule_parser.is_schedule_hint(text)
-                and schedule_parser.has_date_hint(text)
-                and not schedule_parser.has_time_hint(text)
-            ):
-                return (
-                    f"已記住。\n\n已為你記住：{resolved_memory}\n\n"
-                    "若要加入行程，請告訴我時間，例如：明天 10:00 開會。"
-                )
-            return f"已記住。\n\n已為你記住：{resolved_memory}"
 
         if text.startswith("/search"):
             if not skill_registry.is_enabled(SKILL_SEARCH_REPORT):
@@ -428,22 +406,40 @@ def main() -> None:
                 return "搜尋整理技能已停用。"
             return _handle_summary_command(text, search_client, search_formatter, monitoring)
 
-        plan = nl_topic.extract(text)
-        memory_hint = False
-        memory_reason = ""
-        memory_hits = 0
-        if skill_registry.is_enabled(SKILL_MEMORY_RECALL):
-            memory_hint, memory_reason, memory_hits = _memory_query_hint(
-                text, intent_classifier, embedding_client, memory_store
+        decision = intent_router.route(text)
+        if decision.needs_clarification:
+            return _append_decision_note(
+                intent_router.build_clarification_question(decision),
+                decision.capability,
             )
-        if plan.is_search and memory_hint:
-            monitoring.info(
-                f"memory_hint=1 bypass_search=1 reason={memory_reason} hits={memory_hits}"
+
+        if decision.capability == "schedule_add":
+            command = schedule_parser.parse(text)
+            if not command:
+                return _append_decision_note(
+                    intent_router.build_clarification_question(decision),
+                    decision.capability,
+                )
+            result = schedule_service.handle(command, user_id, chat_id)
+            return _append_decision_note(result.reply, decision.capability)
+
+        if decision.capability == "schedule_list":
+            result = schedule_service.handle(
+                ScheduleCommand(action="list", title=""),
+                user_id,
+                chat_id,
             )
-        if plan.is_search and (plan.topic or plan.url) and not memory_hint:
+            return _append_decision_note(result.reply, decision.capability)
+
+        if decision.capability == "search_report":
             if not skill_registry.is_enabled(SKILL_SEARCH_REPORT):
-                return "搜尋整理技能已停用。"
-            monitoring.info("memory_hint=0 search_path=1")
+                return _append_decision_note("搜尋整理技能已停用。", decision.capability)
+            plan = nl_topic.extract(text)
+            if not plan.is_search or not (plan.topic or plan.url):
+                return _append_decision_note(
+                    intent_router.build_clarification_question(decision),
+                    decision.capability,
+                )
             try:
                 if plan.url:
                     response = search_client.summarize_link(plan.url)
@@ -463,13 +459,29 @@ def main() -> None:
                         query_time=datetime.now(),
                     )
                     memory_store.log_report(title, report_path)
-                    return f"已完成案例整理，檔案：{report_path}"
-                return search_formatter.format(response)
+                    return _append_decision_note(
+                        f"已完成案例整理，檔案：{report_path}",
+                        decision.capability,
+                    )
+                return _append_decision_note(
+                    search_formatter.format(response),
+                    decision.capability,
+                )
             except Exception as exc:
                 monitoring.error(exc)
-                return _format_search_error(exc, search_formatter)
+                return _append_decision_note(
+                    _format_search_error(exc, search_formatter),
+                    decision.capability,
+                )
 
-        response = goap.respond(text)
+        forced_decision = None
+        if decision.capability in {"memory_save", "memory_query", "direct_reply"}:
+            forced_decision = decision.capability
+        response = goap.respond(
+            text,
+            forced_decision=forced_decision,
+            forced_reason=decision.reason,
+        )
         if response.decision == "memory_save" and not skill_registry.is_enabled(SKILL_MEMORY_SAVE):
             response.reply = "記憶保存技能已停用。"
             response.memory_content = None
@@ -485,30 +497,6 @@ def main() -> None:
             f" memory_content={bool(response.memory_content)}"
         )
         if response.decision in {"direct_reply", "goap"} and not response.memory_query:
-            if memory_hint and skill_registry.is_enabled(SKILL_MEMORY_RECALL):
-                monitoring.info(f"memory_fallback attempt decision={response.decision}")
-                if memory_reason == "short_term":
-                    response.decision = "memory_query"
-                    response.memory_query = text
-                    monitoring.info("memory_fallback hit=1 source=short_term")
-                else:
-                    try:
-                        semantic_results, source = _semantic_memory_fallback(
-                            text, embedding_client, memory_store
-                        )
-                    except Exception:
-                        semantic_results, source = [], "error"
-                    if semantic_results:
-                        response.decision = "memory_query"
-                        response.memory_query = text
-                        monitoring.info(
-                            f"memory_fallback hit=1 source={source} items={len(semantic_results)}"
-                        )
-                    else:
-                        monitoring.info(f"memory_fallback hit=0 source={source}")
-            else:
-                monitoring.info("memory_fallback skipped no_hint=1")
-        if response.decision in {"direct_reply", "goap"} and not response.memory_query:
             styled = response_styler.style(response.reply, text)
             response.reply = styled.reply
         if config.perf_log:
@@ -516,7 +504,7 @@ def main() -> None:
             monitoring.perf("handle_text.goap", goap_ms, f"decision={response.decision}")
         resolved_memory, normalized = (None, False)
         if skill_registry.is_enabled(SKILL_MEMORY_SAVE):
-            explicit_save = _is_explicit_memory_save(text)
+            explicit_save = _is_explicit_memory_save(text) or decision.capability == "memory_save"
             resolved_memory, normalized = _resolve_memory_content(
                 text, response, llm_client, config.fast_model, explicit_save
             )
@@ -541,6 +529,19 @@ def main() -> None:
                 mem_ms = (time.perf_counter() - mem_start) * 1000
                 monitoring.perf("memory.save", mem_ms)
             response.reply = f"{response.reply}\n\n已為你記住：{resolved_memory}"
+            schedule_command = schedule_parser.parse(text)
+            if schedule_command and schedule_command.action == "add" and schedule_command.start_time:
+                schedule_result = schedule_service.handle(schedule_command, user_id, chat_id)
+                response.reply = f"{response.reply}\n\n{schedule_result.reply}"
+            elif (
+                schedule_parser.is_schedule_hint(text)
+                and schedule_parser.has_date_hint(text)
+                and not schedule_parser.has_time_hint(text)
+            ):
+                response.reply = (
+                    f"{response.reply}\n\n"
+                    "若要加入行程，請告訴我時間，例如：明天 10:00 開會。"
+                )
         if response.memory_query:
             if not skill_registry.is_enabled(SKILL_MEMORY_RECALL):
                 response.reply = "記憶回想技能已停用。"
@@ -604,6 +605,7 @@ def main() -> None:
         if config.perf_log:
             total_ms = (time.perf_counter() - start_time) * 1000
             monitoring.perf("handle_text.total", total_ms)
+        response.reply = _append_decision_note(response.reply, decision.capability)
         return response
 
     def allowlist_checker(message: IncomingMessage) -> bool:
