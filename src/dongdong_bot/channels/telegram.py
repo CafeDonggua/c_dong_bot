@@ -98,6 +98,8 @@ class TelegramClient:
 
         self.app.add_handler(CommandHandler("search", _handle_command))
         self.app.add_handler(CommandHandler("summary", _handle_command))
+        self.app.add_handler(CommandHandler("skill", _handle_command))
+        self.app.add_handler(CommandHandler("allowlist", _handle_command))
         self.app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, _handle))
         self.app.add_error_handler(_error_handler)
         self.app.job_queue.run_repeating(
