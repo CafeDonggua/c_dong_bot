@@ -220,3 +220,41 @@ class MemoryStore:
             seen.add(content)
             deduped.append((content, score))
         return deduped
+
+
+SHORT_TERM_HINTS = (
+    "剛剛",
+    "剛才",
+    "前面",
+    "上一句",
+    "上句",
+    "剛剛說",
+    "剛才說",
+    "剛剛講",
+    "剛才講",
+)
+
+
+def is_short_term_query(text: str) -> bool:
+    return any(keyword in text for keyword in SHORT_TERM_HINTS)
+
+
+def search_session_messages(
+    messages: Sequence[str],
+    query: str,
+    max_items: int = 5,
+) -> List[str]:
+    if not messages:
+        return []
+    cleaned = _strip_short_term_hints(query)
+    if cleaned:
+        matched = [msg for msg in messages if cleaned in msg]
+        return matched[-max_items:]
+    return list(messages)[-max_items:]
+
+
+def _strip_short_term_hints(text: str) -> str:
+    cleaned = text
+    for keyword in SHORT_TERM_HINTS:
+        cleaned = cleaned.replace(keyword, "")
+    return cleaned.strip(" ：:，,。.!？?　")

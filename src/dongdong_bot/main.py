@@ -14,6 +14,7 @@ from dongdong_bot.agent.schedule_store import ScheduleStore
 from dongdong_bot.agent.skills import SkillRegistry
 from dongdong_bot.agent.session import SessionStore
 from dongdong_bot.agent.loop import GoapEngine
+from dongdong_bot.agent.memory import MemoryStore, is_short_term_query, search_session_messages
 from dongdong_bot.channels.telegram import IncomingMessage, TelegramClient
 from dongdong_bot.config import load_config
 from dongdong_bot.cron.scheduler import ReminderScheduler
@@ -25,7 +26,6 @@ from dongdong_bot.lib.nl_search_topic import NLSearchTopicExtractor
 from dongdong_bot.lib.report_content import normalize_report_content
 from dongdong_bot.lib.report_writer import ReportWriter
 from dongdong_bot.lib.response_style import ResponseStyler
-from dongdong_bot.agent.memory import MemoryStore
 from dongdong_bot.monitoring import Monitoring
 from dongdong_bot.lib.vector_math import cosine_similarity, top_k_scored
 
@@ -206,6 +206,8 @@ def _memory_query_hint(
     memory_store: MemoryStore,
     min_score: float = 0.25,
 ) -> tuple[bool, str, int]:
+    if is_short_term_query(text):
+        return True, "short_term", 0
     if intent_classifier is not None:
         intent, score = intent_classifier.classify(text)
         if intent == "memory_query":
@@ -451,6 +453,14 @@ def main() -> None:
                 response.reply = "記憶回想技能已停用。"
                 response.memory_query = None
             else:
+                session = session_store.get(user_id)
+                if session and is_short_term_query(response.memory_query):
+                    session_hits = search_session_messages(session.messages, response.memory_query)
+                    if session_hits:
+                        joined = "\n".join(f"- {item}" for item in session_hits)
+                        response.reply = f"最近對話（未保存）：\n{joined}"
+                        return response
+                    monitoring.info("session_memory hit=0")
                 results = []
                 try:
                     query_start = time.perf_counter()
