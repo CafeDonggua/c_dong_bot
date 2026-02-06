@@ -153,7 +153,7 @@ pytest
 
 ## Agent Skills
 
-本專案的技能定義集中於 `skills/`，每個技能以目錄 + `SKILL.md` 方式描述：
+本專案的技能定義集中於 `resources/skills/`，每個技能以目錄 + `SKILL.md` 方式描述：
 
-- `skills/README.md`：技能清單與用途摘要
-- `skills/SCHEMA.md`：技能格式與必要欄位規範
+- `resources/skills/README.md`：技能清單與用途摘要
+- `resources/skills/SCHEMA.md`：技能格式與必要欄位規範

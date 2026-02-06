@@ -1,10 +1,10 @@
 # Agent Skills 定義規範（本專案）
 
-本文件定義本專案 `skills/` 目錄中的技能檔案格式與必要欄位，用於一致性與可驗證性。
+本文件定義本專案 `resources/skills/` 目錄中的技能檔案格式與必要欄位，用於一致性與可驗證性。
 
 ## 目錄規範
 
-- 每個技能一個目錄：`skills/<skill-id>/`
+- 每個技能一個目錄：`resources/skills/<skill-id>/`
 - 目錄內必須包含 `SKILL.md`
 - 其他檔案（如 `assets/`、`references/`）視需要新增
 

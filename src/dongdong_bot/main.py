@@ -478,7 +478,7 @@ def main() -> None:
     schedule_service = ScheduleService(schedule_store, reminder_store)
     scheduler = ReminderScheduler(schedule_store, reminder_store)
     session_store = SessionStore()
-    skills_dir = Path(__file__).resolve().parents[2] / "skills"
+    skills_dir = Path(__file__).resolve().parents[2] / "resources" / "skills"
     skill_registry = SkillRegistry(
         skills_dir=str(skills_dir),
         state_path=config.skills_state_path,
