@@ -13,7 +13,22 @@
 - 技能啟用/停用：支援基本技能控管
 - 允許名單：可限制可使用聊天助理的帳號
 
-## 架構概覽
+## 專案結構
+
+- `src/`：主要程式碼
+- `tests/`：自動化測試
+- `data/`：執行期資料（記憶、報告、行程、提醒、索引；已加入 .gitignore）
+- `resources/`：非程式碼資源（技能定義、規範文件）
+
+## 技術架構
+
+- **語意路由層**：`IntentRouter` 依 `capabilities.yaml` 能力描述做語意判斷，避免大量關鍵字判斷式
+- **對話決策層**：`GoapEngine` 負責回覆策略與迭代收斂
+- **記憶系統**：Markdown 記憶 + JSONL 向量索引，支援語意檢索與摘要整理
+- **行程與提醒**：行程持久化 + 提醒排程（Telegram job queue 定期檢查）
+- **搜尋整理**：自然語言主題抽取 + 搜尋摘要 + 報告輸出
+
+## 模組分層
 
 - `src/dongdong_bot/agent/`：對話決策、記憶、技能、行程與允許名單
 - `src/dongdong_bot/channels/`：聊天通道整合（目前為 Telegram）
@@ -65,8 +80,10 @@ TELEGRAM_BOT_TOKEN=your_telegram_bot_token
 
 ## 啟動
 
+建議使用 `PYTHONPATH=src` 確保模組載入正常：
+
 ```bash
-python -m dongdong_bot.main
+PYTHONPATH=src python -m dongdong_bot.main
 ```
 
 ## 記憶檔案位置
@@ -74,7 +91,7 @@ python -m dongdong_bot.main
 記憶檔案會寫入：
 
 ```
-/data/data/com.termux/files/home/storage/shared/C_Dong_bot/memory
+data/memory
 ```
 
 檔名格式：
@@ -88,7 +105,7 @@ YYYY-MM-DD.md
 搜尋報告會寫入：
 
 ```
-/data/data/com.termux/files/home/storage/shared/C_Dong_bot/reports
+data/reports
 ```
 
 檔名格式：
@@ -102,8 +119,8 @@ YYYY-MM-DD-查詢標題.md
 行程與提醒會寫入：
 
 ```
-/data/data/com.termux/files/home/storage/shared/C_Dong_bot/schedules.json
-/data/data/com.termux/files/home/storage/shared/C_Dong_bot/reminders.json
+data/schedules.json
+data/reminders.json
 ```
 
 ## 允許名單位置
@@ -111,7 +128,7 @@ YYYY-MM-DD-查詢標題.md
 允許名單預設路徑：
 
 ```
-/data/data/com.termux/files/home/storage/shared/C_Dong_bot/allowlist.json
+data/allowlist.json
 ```
 
 範例格式：
@@ -125,7 +142,7 @@ YYYY-MM-DD-查詢標題.md
 ## 測試
 
 ```bash
-pytest
+PYTHONPATH=src pytest
 ```
 
 ## 使用示例
