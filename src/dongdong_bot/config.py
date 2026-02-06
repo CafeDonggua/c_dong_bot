@@ -7,7 +7,8 @@ import os
 from dotenv import load_dotenv
 
 ENV_PATH = "/data/data/com.termux/files/home/storage/shared/program/python/tg_bot/c_dong_bot/.env"
-MEMORY_DIR = "/data/data/com.termux/files/home/storage/shared/C_Dong_bot"
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+MEMORY_DIR = str(PROJECT_ROOT / "data")
 DEFAULT_MODEL = "gpt-5-mini"
 FAST_MODEL = "gpt-4o-mini"
 EMBEDDING_MODEL = "text-embedding-3-small"
