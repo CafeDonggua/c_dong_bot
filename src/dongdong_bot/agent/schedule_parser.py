@@ -13,6 +13,8 @@ class ScheduleCommand:
     start_time: Optional[datetime] = None
     schedule_id: Optional[str] = None
     list_range: str = "default"
+    intent: str = "clear"
+    message: str = ""
 
 
 class ScheduleParser:
@@ -22,16 +24,48 @@ class ScheduleParser:
             return None
         now = now or datetime.now()
         if self._is_list(cleaned):
-            if self._is_all_list(cleaned):
-                list_range = "all"
-            elif self._is_completed_list(cleaned):
+            if self._is_completed_list(cleaned):
                 list_range = "completed"
+            elif self._is_all_list(cleaned):
+                list_range = "all"
             else:
                 list_range = "default"
             return ScheduleCommand(action="list", title="", list_range=list_range)
-        delete_id = self._extract_id(cleaned)
-        if self._is_delete(cleaned) and delete_id:
-            return ScheduleCommand(action="delete", title="", schedule_id=delete_id)
+        delete_intent = self._has_delete_intent(cleaned)
+        complete_intent = self._has_complete_intent(cleaned)
+        if delete_intent or complete_intent:
+            ids = self._extract_ids(cleaned)
+            if len(ids) > 1:
+                return ScheduleCommand(
+                    action="clarify",
+                    title="",
+                    intent="invalid",
+                    message="一次只能指定一個行程 ID，請重新輸入。",
+                )
+            schedule_id = ids[0] if ids else None
+            if delete_intent and complete_intent:
+                return ScheduleCommand(
+                    action="clarify",
+                    title="",
+                    schedule_id=schedule_id,
+                    intent="ambiguous",
+                    message="請問要刪除還是標示完成？",
+                )
+            if delete_intent:
+                return ScheduleCommand(
+                    action="delete",
+                    title="",
+                    schedule_id=schedule_id,
+                    intent="invalid" if not schedule_id else "delete",
+                    message="請先提供行程 ID，可先查詢行程清單。" if not schedule_id else "",
+                )
+            return ScheduleCommand(
+                action="complete",
+                title="",
+                schedule_id=schedule_id,
+                intent="invalid" if not schedule_id else "complete",
+                message="請先提供行程 ID，可先查詢行程清單。" if not schedule_id else "",
+            )
         update_id = self._extract_id(cleaned)
         if self._is_update(cleaned) and update_id:
             start_time = self._extract_datetime(cleaned, now)
@@ -70,9 +104,8 @@ class ScheduleParser:
             or re.search(r"(早上|上午|下午|晚上|傍晚)?\s*(\d{1,2})點(半)?", text)
         )
 
-    @staticmethod
-    def _is_list(text: str) -> bool:
-        keywords = (
+    def _is_list(self, text: str) -> bool:
+        explicit = (
             "有哪些行程",
             "行程列表",
             "行程清單",
@@ -87,22 +120,46 @@ class ScheduleParser:
             "最近有什麼安排",
             "最近有哪些安排",
             "我最近要做什麼",
+            "已完成行程",
+            "歷史行程",
             "全部行程",
             "所有行程",
         )
-        return any(keyword in text for keyword in keywords)
+        if any(keyword in text for keyword in explicit):
+            return True
+        if "行程" not in text:
+            return False
+        list_verbs = ("列出", "查詢", "顯示", "看看", "有哪些", "清單", "列表")
+        if any(keyword in text for keyword in list_verbs):
+            return True
+        list_modifiers = ("最近", "現在", "全部", "所有", "已完成", "歷史")
+        has_action_intent = self._has_delete_intent(text) or self._has_complete_intent(text)
+        has_action_intent = has_action_intent or self._is_update(text) or self._is_add(text)
+        if any(keyword in text for keyword in list_modifiers) and not has_action_intent:
+            return True
+        return False
 
     @staticmethod
     def _is_completed_list(text: str) -> bool:
-        return "已完成" in text or "歷史" in text
+        keywords = ("已完成", "已經完成", "完成的行程", "已完成的行程", "歷史行程", "歷史")
+        return any(keyword in text for keyword in keywords)
 
     @staticmethod
     def _is_all_list(text: str) -> bool:
         return "全部" in text or "所有" in text
 
     @staticmethod
-    def _is_delete(text: str) -> bool:
-        return text.startswith("刪除") or text.startswith("取消") or text.startswith("刪掉")
+    def _has_delete_intent(text: str) -> bool:
+        keywords = ("刪除", "刪掉", "刪除掉", "取消")
+        return any(keyword in text for keyword in keywords)
+
+    @staticmethod
+    def _has_complete_intent(text: str) -> bool:
+        if any(keyword in text for keyword in ("完成這", "完成該", "完成此", "完成掉")):
+            return True
+        if "完成" in text and any(keyword in text for keyword in ("標記", "標示", "表示")):
+            return True
+        return False
 
     @staticmethod
     def _is_update(text: str) -> bool:
@@ -114,11 +171,13 @@ class ScheduleParser:
         return any(keyword in text for keyword in keywords)
 
     @staticmethod
+    def _extract_ids(text: str) -> list[str]:
+        return re.findall(r"[0-9a-fA-F]{8,}", text)
+
+    @staticmethod
     def _extract_id(text: str) -> Optional[str]:
-        match = re.search(r"[0-9a-f]{8,}", text)
-        if not match:
-            return None
-        return match.group(0)
+        ids = ScheduleParser._extract_ids(text)
+        return ids[0] if ids else None
 
     def _extract_datetime(self, text: str, now: datetime) -> Optional[datetime]:
         date_part = None

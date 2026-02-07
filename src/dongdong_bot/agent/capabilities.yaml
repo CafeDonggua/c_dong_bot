@@ -17,14 +17,16 @@
     },
     {
       "name": "schedule_list",
-      "description": "查詢目前已排定的行程清單。",
+      "description": "查詢或管理行程清單（查詢、刪除、標示完成）。",
       "required_inputs": [],
       "example_requests": [
         "我有哪些行程",
         "行程列表",
         "最近有哪些安排",
         "已完成行程有哪些",
-        "歷史行程"
+        "歷史行程",
+        "把 ID=0bfd6965 的行程刪除掉",
+        "把 ID=0bfd6965 的行程標記為已完成"
       ],
       "clarifications": {}
     },

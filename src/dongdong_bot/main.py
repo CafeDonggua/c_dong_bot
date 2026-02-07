@@ -545,7 +545,7 @@ def main() -> None:
 
         if decision.capability == "schedule_list":
             list_command = schedule_parser.parse(text)
-            if not list_command or list_command.action != "list":
+            if not list_command:
                 list_command = ScheduleCommand(action="list", title="")
             result = schedule_service.handle(list_command, user_id, chat_id)
             return _append_decision_note(result.reply, decision.capability)
