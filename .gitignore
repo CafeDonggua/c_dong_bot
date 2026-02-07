@@ -4,6 +4,17 @@
 tests/
 .env.example
 __pycache__/
+*.pyc
+.venv/
+venv/
+dist/
+*.egg-info/
+.DS_Store
+Thumbs.db
+*.tmp
+*.swp
+.vscode/
+.idea/
 specs/
 AGENTS.md
 VERSION_1_0_CHECKLIST.md

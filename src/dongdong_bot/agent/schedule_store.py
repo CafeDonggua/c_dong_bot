@@ -19,6 +19,7 @@ class ScheduleItem:
     end_time: datetime | None
     timezone: str
     status: str
+    completed_at: datetime | None
 
     def to_dict(self) -> dict:
         return {
@@ -31,6 +32,7 @@ class ScheduleItem:
             "end_time": self.end_time.isoformat() if self.end_time else None,
             "timezone": self.timezone,
             "status": self.status,
+            "completed_at": self.completed_at.isoformat() if self.completed_at else None,
         }
 
     @classmethod
@@ -45,6 +47,9 @@ class ScheduleItem:
             end_time=datetime.fromisoformat(data["end_time"]) if data.get("end_time") else None,
             timezone=str(data.get("timezone", "")),
             status=str(data.get("status", "scheduled")),
+            completed_at=(
+                datetime.fromisoformat(data["completed_at"]) if data.get("completed_at") else None
+            ),
         )
 
 
@@ -82,6 +87,7 @@ class ScheduleStore:
             end_time=end_time,
             timezone=timezone,
             status="scheduled",
+            completed_at=None,
         )
         items = self._load()
         items.append(schedule)
@@ -98,7 +104,7 @@ class ScheduleStore:
             for key, value in fields.items():
                 if value is None:
                     continue
-                if key in {"start_time", "end_time"} and isinstance(value, datetime):
+                if key in {"start_time", "end_time", "completed_at"} and isinstance(value, datetime):
                     data[key] = value.isoformat()
                 elif key in data:
                     data[key] = value
@@ -111,6 +117,10 @@ class ScheduleStore:
 
     def cancel(self, schedule_id: str) -> Optional[ScheduleItem]:
         return self.update(schedule_id, status="cancelled")
+
+    def complete(self, schedule_id: str, completed_at: datetime | None = None) -> Optional[ScheduleItem]:
+        completed_at = completed_at or datetime.now()
+        return self.update(schedule_id, status="completed", completed_at=completed_at)
 
     def _load(self) -> List[ScheduleItem]:
         if not self.path.exists():

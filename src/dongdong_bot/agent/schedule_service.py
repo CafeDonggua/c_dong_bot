@@ -22,7 +22,7 @@ class ScheduleService:
     def handle(self, command: ScheduleCommand, user_id: str, chat_id: str) -> ScheduleResult:
         if command.action == "list":
             items = self.schedule_store.list(user_id)
-            return ScheduleResult(reply=self._format_list(items))
+            return ScheduleResult(reply=self._format_list(items, command.list_range))
         if command.action == "add" and command.start_time:
             schedule = self.schedule_store.create(
                 user_id=user_id,
@@ -50,9 +50,30 @@ class ScheduleService:
         return ScheduleResult(reply="我沒看懂行程指令，請提供日期時間，例如：幫我記錄明天 10:00 開會")
 
     @staticmethod
-    def _format_list(items: List[ScheduleItem]) -> str:
+    def _format_list(items: List[ScheduleItem], list_range: str = "default") -> str:
+        if list_range == "completed":
+            completed_items = [item for item in items if item.status == "completed"]
+            if not completed_items:
+                return "目前沒有已完成行程。"
+            lines = []
+            for item in sorted(completed_items, key=lambda x: x.start_time):
+                when = item.start_time.strftime("%Y-%m-%d %H:%M")
+                lines.append(f"- [{item.schedule_id[:8]}] {when} {item.title}（已完成）")
+            return "已完成行程：\n" + "\n".join(lines)
+
+        if list_range == "all":
+            visible_items = [item for item in items if item.status in {"scheduled", "completed"}]
+            if not visible_items:
+                return "目前沒有行程。"
+            lines = []
+            for item in sorted(visible_items, key=lambda x: x.start_time):
+                when = item.start_time.strftime("%Y-%m-%d %H:%M")
+                status_label = "已完成" if item.status == "completed" else "未完成"
+                lines.append(f"- [{item.schedule_id[:8]}] {when} {item.title}（{status_label}）")
+            return "全部行程：\n" + "\n".join(lines)
+
         if not items:
-            return "目前沒有行程。"
+            return "無未完成行程，可查詢已完成行程。"
         lines = []
         for item in sorted(items, key=lambda x: x.start_time):
             if item.status != "scheduled":
@@ -60,7 +81,7 @@ class ScheduleService:
             when = item.start_time.strftime("%Y-%m-%d %H:%M")
             lines.append(f"- [{item.schedule_id[:8]}] {when} {item.title}")
         if not lines:
-            return "目前沒有行程。"
+            return "無未完成行程，可查詢已完成行程。"
         return "你的行程：\n" + "\n".join(lines)
 
     @staticmethod

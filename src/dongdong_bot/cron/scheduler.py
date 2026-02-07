@@ -11,6 +11,7 @@ from dongdong_bot.agent.schedule_store import ScheduleStore
 @dataclass
 class ReminderPayload:
     reminder_id: str
+    schedule_id: str
     chat_id: str
     message: str
 
@@ -34,6 +35,7 @@ class ReminderScheduler:
             due.append(
                 ReminderPayload(
                     reminder_id=reminder.reminder_id,
+                    schedule_id=schedule.schedule_id,
                     chat_id=schedule.chat_id,
                     message=message,
                 )
@@ -42,6 +44,7 @@ class ReminderScheduler:
 
     def mark_sent(self, reminder: ReminderPayload) -> None:
         self.reminder_store.mark_sent(reminder.reminder_id)
+        self.schedule_store.complete(reminder.schedule_id)
 
     def mark_failed(self, reminder: ReminderPayload, error: str) -> None:
         self.reminder_store.mark_failed(reminder.reminder_id, error)

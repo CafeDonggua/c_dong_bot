@@ -12,6 +12,7 @@ class ScheduleCommand:
     title: str
     start_time: Optional[datetime] = None
     schedule_id: Optional[str] = None
+    list_range: str = "default"
 
 
 class ScheduleParser:
@@ -21,7 +22,13 @@ class ScheduleParser:
             return None
         now = now or datetime.now()
         if self._is_list(cleaned):
-            return ScheduleCommand(action="list", title="")
+            if self._is_all_list(cleaned):
+                list_range = "all"
+            elif self._is_completed_list(cleaned):
+                list_range = "completed"
+            else:
+                list_range = "default"
+            return ScheduleCommand(action="list", title="", list_range=list_range)
         delete_id = self._extract_id(cleaned)
         if self._is_delete(cleaned) and delete_id:
             return ScheduleCommand(action="delete", title="", schedule_id=delete_id)
@@ -80,8 +87,18 @@ class ScheduleParser:
             "最近有什麼安排",
             "最近有哪些安排",
             "我最近要做什麼",
+            "全部行程",
+            "所有行程",
         )
         return any(keyword in text for keyword in keywords)
+
+    @staticmethod
+    def _is_completed_list(text: str) -> bool:
+        return "已完成" in text or "歷史" in text
+
+    @staticmethod
+    def _is_all_list(text: str) -> bool:
+        return "全部" in text or "所有" in text
 
     @staticmethod
     def _is_delete(text: str) -> bool:
