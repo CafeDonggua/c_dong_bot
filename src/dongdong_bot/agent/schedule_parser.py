@@ -31,6 +31,13 @@ class ScheduleParser:
             else:
                 list_range = "default"
             return ScheduleCommand(action="list", title="", list_range=list_range)
+        reply_token = cleaned.strip(" 　。.!！？?，,、")
+        if self._is_confirm_reply(reply_token):
+            return ScheduleCommand(action="bulk_delete_confirm", title="", intent="confirm")
+        if self._is_cancel_reply(reply_token):
+            return ScheduleCommand(action="bulk_delete_cancel", title="", intent="cancel")
+        if self._is_bulk_delete_completed(cleaned):
+            return ScheduleCommand(action="bulk_delete_completed", title="")
         delete_intent = self._has_delete_intent(cleaned)
         complete_intent = self._has_complete_intent(cleaned)
         if delete_intent or complete_intent:
@@ -126,7 +133,11 @@ class ScheduleParser:
             "所有行程",
         )
         if any(keyword in text for keyword in explicit):
-            return True
+            has_action_intent = self._has_delete_intent(text) or self._has_complete_intent(text)
+            has_action_intent = has_action_intent or self._is_update(text) or self._is_add(text)
+            if not has_action_intent:
+                return True
+            return False
         if "行程" not in text:
             return False
         list_verbs = ("列出", "查詢", "顯示", "看看", "有哪些", "清單", "列表")
@@ -147,6 +158,21 @@ class ScheduleParser:
     @staticmethod
     def _is_all_list(text: str) -> bool:
         return "全部" in text or "所有" in text
+
+    @staticmethod
+    def _is_bulk_delete_completed(text: str) -> bool:
+        delete_keywords = ("刪除", "刪掉", "刪除掉", "清除", "清空")
+        completed_keywords = ("已完成", "已經完成", "完成的", "完成")
+        bulk_keywords = ("全部", "所有", "全都")
+        if not any(keyword in text for keyword in delete_keywords):
+            return False
+        if not any(keyword in text for keyword in completed_keywords):
+            return False
+        if "行程" not in text:
+            return False
+        if any(keyword in text for keyword in bulk_keywords):
+            return True
+        return "已完成行程" in text or "完成的行程" in text
 
     @staticmethod
     def _has_delete_intent(text: str) -> bool:
@@ -178,6 +204,16 @@ class ScheduleParser:
     def _extract_id(text: str) -> Optional[str]:
         ids = ScheduleParser._extract_ids(text)
         return ids[0] if ids else None
+
+    @staticmethod
+    def _is_confirm_reply(text: str) -> bool:
+        confirm_keywords = ("確認", "確定", "好", "好的", "可以")
+        return text in confirm_keywords
+
+    @staticmethod
+    def _is_cancel_reply(text: str) -> bool:
+        cancel_keywords = ("取消", "不用了", "不要了", "算了", "先不要")
+        return text in cancel_keywords
 
     def _extract_datetime(self, text: str, now: datetime) -> Optional[datetime]:
         date_part = None

@@ -122,6 +122,19 @@ class ScheduleStore:
         completed_at = completed_at or datetime.now()
         return self.update(schedule_id, status="completed", completed_at=completed_at)
 
+    def delete_completed(self, user_id: str) -> int:
+        items = self._load()
+        kept: List[ScheduleItem] = []
+        deleted = 0
+        for item in items:
+            if item.user_id == user_id and item.status == "completed":
+                deleted += 1
+                continue
+            kept.append(item)
+        if deleted:
+            self._write(kept)
+        return deleted
+
     def _load(self) -> List[ScheduleItem]:
         if not self.path.exists():
             return []

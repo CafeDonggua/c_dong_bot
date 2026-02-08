@@ -11,6 +11,8 @@ class Session:
     started_at: datetime
     last_active_at: datetime
     messages: List[str] = field(default_factory=list)
+    pending_action: str | None = None
+    pending_payload: Dict[str, str | int] = field(default_factory=dict)
 
 
 class SessionStore:
@@ -43,3 +45,28 @@ class SessionStore:
 
     def clear(self, user_id: str) -> None:
         self._sessions.pop(user_id, None)
+
+    def set_pending_action(
+        self,
+        user_id: str,
+        action: str,
+        payload: Dict[str, str | int] | None = None,
+    ) -> None:
+        session = self.get(user_id)
+        if session is None:
+            session = self.touch(user_id, "")
+        session.pending_action = action
+        session.pending_payload = dict(payload or {})
+
+    def get_pending_action(self, user_id: str) -> tuple[str | None, Dict[str, str | int]]:
+        session = self.get(user_id)
+        if session is None:
+            return None, {}
+        return session.pending_action, dict(session.pending_payload)
+
+    def clear_pending_action(self, user_id: str) -> None:
+        session = self.get(user_id)
+        if session is None:
+            return
+        session.pending_action = None
+        session.pending_payload = {}

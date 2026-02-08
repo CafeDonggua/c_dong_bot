@@ -475,9 +475,9 @@ def main() -> None:
     schedule_store = ScheduleStore(config.schedules_path)
     reminder_store = ReminderStore(config.reminders_path)
     schedule_parser = ScheduleParser()
-    schedule_service = ScheduleService(schedule_store, reminder_store)
     scheduler = ReminderScheduler(schedule_store, reminder_store)
     session_store = SessionStore()
+    schedule_service = ScheduleService(schedule_store, reminder_store, session_store)
     skills_dir = Path(__file__).resolve().parents[2] / "resources" / "skills"
     skill_registry = SkillRegistry(
         skills_dir=str(skills_dir),
@@ -499,6 +499,18 @@ def main() -> None:
         start_time = time.perf_counter()
         text, user_id, chat_id, channel = _coerce_message(payload)
         session_store.touch(user_id, text)
+
+        if schedule_service.has_pending_bulk_delete(user_id):
+            followup_command = schedule_parser.parse(text) if text.strip() else None
+            if followup_command and followup_command.action in {
+                "bulk_delete_confirm",
+                "bulk_delete_cancel",
+                "bulk_delete_completed",
+            }:
+                pending_result = schedule_service.handle(followup_command, user_id, chat_id)
+            else:
+                pending_result = schedule_service.bulk_delete_prompt(user_id)
+            return _append_decision_note(pending_result.reply, "schedule_list")
 
         if text.startswith("/skill"):
             return _handle_skill_command(text, skill_registry)
