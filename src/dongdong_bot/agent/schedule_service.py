@@ -71,21 +71,46 @@ class ScheduleService:
                 end_time=None,
                 timezone="",
             )
+            persisted = self.schedule_store.get(schedule.schedule_id)
+            if not persisted:
+                return ScheduleResult(reply="行程新增失敗，請稍後再試。")
             self.reminder_store.create(schedule.schedule_id, schedule.start_time)
-            return ScheduleResult(reply=self._format_created(schedule))
-        if command.action == "update" and command.schedule_id:
-            updated = self.schedule_store.update(
-                command.schedule_id,
-                title=command.title or None,
-                start_time=command.start_time,
+            return ScheduleResult(reply=self._format_created(persisted))
+        if command.action == "update":
+            if not command.schedule_id:
+                return ScheduleResult(reply="請先提供行程 ID，可先查詢行程清單。")
+            current, resolve_error = self._resolve_schedule(user_id, command.schedule_id, action_label="更新")
+            if resolve_error:
+                return ScheduleResult(reply=resolve_error)
+            if current.status == "completed":
+                return ScheduleResult(reply="行程已完成，無法修改。")
+            if current.status == "cancelled":
+                return ScheduleResult(reply="行程已取消，無法修改。")
+            has_updates = any(
+                [
+                    bool(command.title),
+                    command.start_time is not None,
+                    bool(command.description),
+                    command.end_time is not None,
+                ]
             )
-            if updated and command.start_time:
+            if not has_updates:
+                return ScheduleResult(reply="請提供要更新的內容。")
+            updated = self.schedule_store.update(
+                current.schedule_id,
+                title=command.title or None,
+                description=command.description or None,
+                start_time=command.start_time,
+                end_time=command.end_time,
+            )
+            if updated and command.start_time and command.start_time != current.start_time:
+                self.reminder_store.invalidate_pending_by_schedule(updated.schedule_id, "schedule_updated")
                 self.reminder_store.create(updated.schedule_id, updated.start_time)
             return ScheduleResult(reply=self._format_updated(updated))
         if command.action == "delete":
             if not command.schedule_id:
                 return ScheduleResult(reply="請先提供行程 ID，可先查詢行程清單。")
-            current, resolve_error = self._resolve_schedule(user_id, command.schedule_id)
+            current, resolve_error = self._resolve_schedule(user_id, command.schedule_id, action_label="刪除")
             if resolve_error:
                 return ScheduleResult(reply=resolve_error)
             if current.status == "cancelled":
@@ -97,9 +122,9 @@ class ScheduleService:
         if command.action == "complete":
             if not command.schedule_id:
                 return ScheduleResult(reply="請先提供行程 ID，可先查詢行程清單。")
-            current, resolve_error = self._resolve_schedule(user_id, command.schedule_id)
+            current, resolve_error = self._resolve_schedule(user_id, command.schedule_id, action_label="完成")
             if resolve_error:
-                return ScheduleResult(reply=resolve_error.replace("刪除", "完成"))
+                return ScheduleResult(reply=resolve_error)
             if current.status == "completed":
                 return ScheduleResult(reply="行程已完成，無需重複操作。")
             if current.status == "cancelled":
@@ -182,11 +207,16 @@ class ScheduleService:
         when = item.start_time.strftime("%Y-%m-%d %H:%M")
         return f"已完成行程：{when} {item.title}（ID:{item.schedule_id[:8]}）"
 
-    def _resolve_schedule(self, user_id: str, schedule_id: str) -> tuple[ScheduleItem | None, str | None]:
+    def _resolve_schedule(
+        self,
+        user_id: str,
+        schedule_id: str,
+        action_label: str = "刪除",
+    ) -> tuple[ScheduleItem | None, str | None]:
         items = self.schedule_store.list(user_id)
         matches = [item for item in items if item.schedule_id.startswith(schedule_id)]
         if not matches:
-            return None, "找不到要刪除的行程。"
+            return None, f"找不到要{action_label}的行程。"
         if len(matches) > 1:
             return None, "找到多筆行程符合此 ID，請提供完整 ID。"
         return matches[0], None

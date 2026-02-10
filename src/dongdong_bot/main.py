@@ -73,6 +73,7 @@ def _handle_search_command(
     except Exception as exc:
         if monitoring is not None:
             monitoring.error(exc)
+            monitoring.error_event("search", str(exc))
         return _format_search_error(exc, formatter)
 
 
@@ -91,20 +92,30 @@ def _handle_summary_command(
     except Exception as exc:
         if monitoring is not None:
             monitoring.error(exc)
+            monitoring.error_event("summary", str(exc))
         return _format_search_error(exc, formatter, default_reason="連結摘要失敗")
 
 
 def _format_search_error(
     exc: Exception,
     formatter: SearchFormatter,
-    default_reason: str = "搜尋失敗",
+    default_reason: str = "搜尋服務暫時無法使用",
 ) -> str:
     reason = default_reason
     suggestion = "請稍後再試或改用 /search /summary 指令。"
     if isinstance(exc, (NotFoundError, PermissionDeniedError)):
-        reason = "搜尋模型不可用或權限不足"
+        reason = "搜尋服務不可用或權限不足"
         suggestion = "請確認 OPENAI_SEARCH_API_KEY 或改用 /search 指令。"
     return formatter.format_error(reason, suggestion)
+
+
+def _fallback_reply(kind: str) -> str:
+    mapping = {
+        "llm": "目前無法取得回覆，請稍後再試。",
+        "embedding": "記憶檢索暫時無法使用，請稍後再試。",
+        "search": "搜尋服務暫時無法使用，請稍後再試。",
+    }
+    return mapping.get(kind, "目前服務暫時無法使用，請稍後再試。")
 
 
 def _handle_skill_command(text: str, registry: SkillRegistry) -> str:
@@ -541,12 +552,17 @@ def main() -> None:
             if command and command.action == "add" and command.start_time:
                 result = schedule_service.handle(command, user_id, chat_id)
                 return _append_decision_note(result.reply, decision.capability)
-            llm_command = _extract_schedule_from_llm(
-                llm_client=llm_client,
-                model=config.fast_model,
-                user_text=text,
-                now=datetime.now(),
-            )
+            try:
+                llm_command = _extract_schedule_from_llm(
+                    llm_client=llm_client,
+                    model=config.fast_model,
+                    user_text=text,
+                    now=datetime.now(),
+                )
+            except Exception as exc:
+                monitoring.error(exc)
+                monitoring.error_event("llm_schedule_extract", str(exc))
+                return _append_decision_note(_fallback_reply("llm"), decision.capability)
             if llm_command:
                 result = schedule_service.handle(llm_command, user_id, chat_id)
                 return _append_decision_note(result.reply, decision.capability)
@@ -618,11 +634,16 @@ def main() -> None:
         forced_decision = None
         if decision.capability in {"memory_save", "memory_query", "direct_reply"}:
             forced_decision = decision.capability
-        response = goap.respond(
-            text,
-            forced_decision=forced_decision,
-            forced_reason=decision.reason,
-        )
+        try:
+            response = goap.respond(
+                text,
+                forced_decision=forced_decision,
+                forced_reason=decision.reason,
+            )
+        except Exception as exc:
+            monitoring.error(exc)
+            monitoring.error_event("llm_goap", str(exc))
+            return _append_decision_note(_fallback_reply("llm"), decision.capability)
         if response.decision == "memory_save" and not skill_registry.is_enabled(SKILL_MEMORY_SAVE):
             response.reply = "記憶保存技能已停用。"
             response.memory_content = None
@@ -765,8 +786,10 @@ def main() -> None:
                 except ValueError:
                     response.reply = f"{response.reply}\n\n日期格式不正確，請使用 YYYY-MM-DD。"
                     return response
-                except Exception:
-                    response.reply = f"{response.reply}\n\n記憶檢索暫時無法使用，請稍後再試。"
+                except Exception as exc:
+                    monitoring.error(exc)
+                    monitoring.error_event("memory_query", str(exc))
+                    response.reply = f"{response.reply}\n\n{_fallback_reply('embedding')}"
                     return response
                 if results:
                     candidates = memory_store.summarize_results(

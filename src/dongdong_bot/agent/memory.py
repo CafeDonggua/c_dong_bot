@@ -35,6 +35,8 @@ class MemoryStore:
         self.embedding_index_path = (
             Path(embedding_index_path) if embedding_index_path else self.root_dir / "embeddings.jsonl"
         )
+        self.embedding_index_path.parent.mkdir(parents=True, exist_ok=True)
+        self._ensure_writable(self.embedding_index_path.parent)
         self._legacy_dir = self.root_dir
 
     @staticmethod
@@ -82,6 +84,53 @@ class MemoryStore:
         with self.embedding_index_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(record, ensure_ascii=False) + "\n")
         return path
+
+    def delete_all(self) -> int:
+        removed = 0
+        for path in self.memory_dir.glob("*.md"):
+            removed += self._count_entries(path)
+            path.unlink(missing_ok=True)
+        if self.embedding_index_path.exists():
+            removed += self._count_embedding_entries(self.embedding_index_path)
+            self.embedding_index_path.unlink(missing_ok=True)
+        return removed
+
+    def delete_by_date_range(self, start: str, end: str) -> int:
+        removed = 0
+        dates = set(self._date_range(start, end))
+        for date in dates:
+            path = self._file_path(date)
+            if path.exists():
+                removed += self._count_entries(path)
+                path.unlink(missing_ok=True)
+        removed += self._filter_embedding_index(
+            lambda record: str(record.get("date")) not in dates
+        )
+        return removed
+
+    def delete_by_keyword(self, keyword: str, start: str | None = None, end: str | None = None) -> int:
+        keyword = keyword.strip()
+        if not keyword:
+            return 0
+        removed = 0
+        target_dates = None
+        if start and end:
+            target_dates = set(self._date_range(start, end))
+        for path in self.memory_dir.glob("*.md"):
+            date = path.stem
+            if target_dates is not None and date not in target_dates:
+                continue
+            lines = path.read_text(encoding="utf-8").splitlines()
+            kept = [line for line in lines if keyword not in line]
+            removed += len(lines) - len(kept)
+            if kept:
+                path.write_text("\n".join(kept) + "\n", encoding="utf-8")
+            else:
+                path.unlink(missing_ok=True)
+        removed += self._filter_embedding_index(
+            lambda record: not self._should_remove_record(record, keyword, target_dates)
+        )
+        return removed
 
     def query(self, query: str, date: str | None = None) -> List[str]:
         date = date or datetime.now().strftime("%Y-%m-%d")
@@ -220,6 +269,49 @@ class MemoryStore:
             seen.add(content)
             deduped.append((content, score))
         return deduped
+
+    @staticmethod
+    def _count_entries(path: Path) -> int:
+        try:
+            return sum(1 for line in path.read_text(encoding="utf-8").splitlines() if line.strip())
+        except FileNotFoundError:
+            return 0
+
+    @staticmethod
+    def _count_embedding_entries(path: Path) -> int:
+        try:
+            return sum(1 for line in path.read_text(encoding="utf-8").splitlines() if line.strip())
+        except FileNotFoundError:
+            return 0
+
+    def _filter_embedding_index(self, keep_fn) -> int:
+        if not self.embedding_index_path.exists():
+            return 0
+        kept = []
+        removed = 0
+        for line in self.embedding_index_path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                kept.append(line)
+                continue
+            if keep_fn(record):
+                kept.append(json.dumps(record, ensure_ascii=False))
+            else:
+                removed += 1
+        if removed:
+            self.embedding_index_path.write_text("\n".join(kept) + ("\n" if kept else ""), encoding="utf-8")
+        return removed
+
+    @staticmethod
+    def _should_remove_record(record: dict, keyword: str, target_dates: set[str] | None) -> bool:
+        content = str(record.get("content", ""))
+        date = str(record.get("date", ""))
+        if target_dates is not None and date not in target_dates:
+            return False
+        return keyword in content
 
 
 SHORT_TERM_HINTS = (

@@ -1,8 +1,7 @@
 .codex/
 .specify/
 .env
-tests/
-.env.example
+_ext/
 __pycache__/
 *.pyc
 .venv/

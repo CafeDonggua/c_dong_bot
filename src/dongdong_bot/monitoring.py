@@ -57,6 +57,10 @@ class Monitoring:
             self._error_states[signature] = _ErrorState(last_emitted=now)
         self._emit("error", signature, suppressed_count=suppressed)
 
+    def error_event(self, event_type: str, message: str) -> None:
+        cleaned = f"{event_type} {message}".strip()
+        self._emit("error_event", cleaned)
+
     def perf(self, name: str, elapsed_ms: float, detail: str | None = None) -> None:
         cleaned = f"{name} {elapsed_ms:.1f}ms"
         if detail:

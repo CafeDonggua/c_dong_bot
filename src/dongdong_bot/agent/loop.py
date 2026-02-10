@@ -227,7 +227,11 @@ class GoapEngine:
 
     def _next_step(self, user_text: str, history: List[StepResult]) -> StepResult:
         prompt = self._build_prompt(user_text, history)
+        step_start = time.perf_counter()
         parsed = self._request_json(prompt)
+        if self.perf_log:
+            step_ms = (time.perf_counter() - step_start) * 1000
+            print(f"[perf] goap.step total_ms={step_ms:.1f} history_len={len(history)}")
 
         return StepResult(
             goal=parsed.get("goal", "理解使用者需求"),
@@ -248,10 +252,12 @@ class GoapEngine:
             "回覆需簡潔、清楚，且避免要求多輪確認。\n\n"
             f"使用者輸入: {user_text}\n"
         )
-        return (
-            self.llm_client.generate(model=self.fast_model, prompt=prompt).strip()
-            or "我已理解你的需求。"
-        )
+        start = time.perf_counter()
+        reply = self.llm_client.generate(model=self.fast_model, prompt=prompt).strip()
+        if self.perf_log:
+            elapsed_ms = (time.perf_counter() - start) * 1000
+            print(f"[perf] goap.direct_reply.total_ms={elapsed_ms:.1f}")
+        return reply or "我已理解你的需求。"
 
     @staticmethod
     def _extract_memory_content(user_text: str) -> Optional[str]:

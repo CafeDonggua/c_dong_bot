@@ -63,6 +63,21 @@ class ReminderStore:
     def mark_failed(self, reminder_id: str, error: str) -> None:
         self._update_status(reminder_id, "failed", error)
 
+    def invalidate_pending_by_schedule(self, schedule_id: str, reason: str = "schedule_updated") -> int:
+        reminders = self._load()
+        updated = 0
+        for idx, reminder in enumerate(reminders):
+            if reminder.schedule_id != schedule_id or reminder.status != "pending":
+                continue
+            data = reminder.to_dict()
+            data["status"] = "failed"
+            data["last_error"] = reason
+            reminders[idx] = Reminder.from_dict(data)
+            updated += 1
+        if updated:
+            self._write(reminders)
+        return updated
+
     def _update_status(self, reminder_id: str, status: str, error: str = "") -> None:
         reminders = self._load()
         for idx, reminder in enumerate(reminders):

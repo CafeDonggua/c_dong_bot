@@ -11,6 +11,8 @@ class ScheduleCommand:
     action: str
     title: str
     start_time: Optional[datetime] = None
+    end_time: Optional[datetime] = None
+    description: str = ""
     schedule_id: Optional[str] = None
     list_range: str = "default"
     intent: str = "clear"
@@ -74,15 +76,26 @@ class ScheduleParser:
                 message="請先提供行程 ID，可先查詢行程清單。" if not schedule_id else "",
             )
         update_id = self._extract_id(cleaned)
-        if self._is_update(cleaned) and update_id:
+        if self._is_update(cleaned):
+            if not update_id:
+                return ScheduleCommand(
+                    action="clarify",
+                    title="",
+                    intent="invalid",
+                    message="請先提供行程 ID，可先查詢行程清單。",
+                )
             start_time = self._extract_datetime(cleaned, now)
+            end_time = self._extract_end_datetime(cleaned, now)
+            description = self._extract_description(cleaned)
             title = self._extract_title(cleaned)
             if title == "行程":
                 title = ""
             return ScheduleCommand(
                 action="update",
                 title=title,
+                description=description,
                 start_time=start_time,
+                end_time=end_time,
                 schedule_id=update_id,
             )
         if self._is_add(cleaned):
@@ -242,6 +255,20 @@ class ScheduleParser:
                     hour += 12
                 if period in {"早上", "上午"} and hour == 12:
                     hour = 0
+            else:
+                cn_match = re.search(
+                    r"(早上|上午|下午|晚上|傍晚)?\s*([一二三四五六七八九十兩]{1,2})點(半)?",
+                    text,
+                )
+                if cn_match:
+                    period = cn_match.group(1) or ""
+                    hour = self._parse_chinese_hour(cn_match.group(2))
+                    minute = 30 if cn_match.group(3) else 0
+                    if hour is not None:
+                        if period in {"下午", "晚上", "傍晚"} and hour < 12:
+                            hour += 12
+                        if period in {"早上", "上午"} and hour == 12:
+                            hour = 0
         if hour is None or minute is None:
             return None
         if date_part is None:
@@ -252,9 +279,63 @@ class ScheduleParser:
             return None
 
     @staticmethod
+    def _parse_chinese_hour(value: str) -> Optional[int]:
+        mapping = {
+            "零": 0,
+            "一": 1,
+            "二": 2,
+            "兩": 2,
+            "三": 3,
+            "四": 4,
+            "五": 5,
+            "六": 6,
+            "七": 7,
+            "八": 8,
+            "九": 9,
+            "十": 10,
+        }
+        if value in mapping:
+            return mapping[value]
+        if value.startswith("十") and len(value) == 2:
+            tail = mapping.get(value[1])
+            return 10 + tail if tail is not None else None
+        if value.endswith("十") and len(value) == 2:
+            head = mapping.get(value[0])
+            return head * 10 if head is not None else None
+        if len(value) == 2:
+            head = mapping.get(value[0])
+            tail = mapping.get(value[1])
+            if head is None or tail is None:
+                return None
+            return head * 10 + tail
+        return None
+
+    def _extract_end_datetime(self, text: str, now: datetime) -> Optional[datetime]:
+        for marker in ("結束時間", "結束", "到"):
+            if marker not in text:
+                continue
+            _, tail = text.split(marker, 1)
+            candidate = tail.strip()
+            if not candidate:
+                continue
+            parsed = self._extract_datetime(candidate, now)
+            if parsed:
+                return parsed
+        return None
+
+    @staticmethod
+    def _extract_description(text: str) -> str:
+        match = re.search(r"(?:描述|說明|備註)[:：]\\s*(.+)", text)
+        if match:
+            return match.group(1).strip()
+        return ""
+
+    @staticmethod
     def _extract_title(text: str) -> str:
         stripped = re.sub(r"\d{4}-\d{2}-\d{2}", "", text)
         stripped = re.sub(r"\d{1,2}:\d{2}", "", stripped)
+        stripped = re.sub(r"[0-9a-fA-F]{8,}", "", stripped)
+        stripped = re.sub(r"(?:描述|說明|備註)[:：].*", "", stripped)
         for keyword in (
             "幫我",
             "請",
@@ -269,6 +350,9 @@ class ScheduleParser:
             "刪除",
             "取消",
             "刪掉",
+            "結束時間",
+            "結束",
+            "到",
         ):
             stripped = stripped.replace(keyword, "")
         stripped = (

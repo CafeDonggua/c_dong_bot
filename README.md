@@ -7,11 +7,14 @@
 - Telegram 私聊語意回覆
 - 記憶保存：自動寫入每日 Markdown 檔案
 - 記憶查詢：支援當日 / 指定日期 / 日期區間
-- 行程管理：新增 / 查詢 / 修改 / 取消行程並發送提醒
+- 行程管理：新增 / 查詢 / 依行程 ID 修改 / 取消行程並發送提醒
 - 迭代重複偵測：避免無進展消耗
 - 自然語言搜尋整理：產出摘要、重點、來源與查詢資訊的報告
 - 技能啟用/停用：支援基本技能控管
 - 允許名單：可限制可使用聊天助理的帳號
+- Nanobot 對照報告：產出聊天/排程功能清單與 v1.0 checklist 對照
+- 記憶管理：支援刪除/重置記憶的管理指令
+- 回歸測試：核心流程與常見中文句型的可重複測試集
 
 ## 專案結構
 
@@ -145,6 +148,12 @@ data/allowlist.json
 PYTHONPATH=src pytest
 ```
 
+### 回歸測試
+
+```bash
+scripts/run_regression.sh
+```
+
 ## 使用示例
 
 - 記憶保存：
@@ -156,8 +165,12 @@ PYTHONPATH=src pytest
   - 「幫我記錄明天 10:00 開會」
 - 行程查詢：
   - 「我有哪些行程」
+- 行程更新：
+  - 「修改 <行程ID> 明天 11:00 改成 例會」
 - 搜尋報告：
   - 「幫我整理 NVIDIA 最新消息」→ 產出含摘要、重點、來源與查詢資訊的報告檔案
+- Nanobot 對照報告：
+  - `python -m dongdong_bot.tools.nanobot_report`
 
 ## 管理指令
 
@@ -167,6 +180,11 @@ PYTHONPATH=src pytest
 - `/allowlist list`：列出允許名單
 - `/allowlist add <user_id> [channel]`：加入允許名單
 - `/allowlist remove <user_id> [channel]`：移除允許名單
+- 記憶管理（CLI）：
+  - `python -m dongdong_bot.tools.memory_admin delete --scope all --user-id <id> --channel telegram`
+  - `python -m dongdong_bot.tools.memory_admin delete --scope range --start YYYY-MM-DD --end YYYY-MM-DD --user-id <id>`
+  - `python -m dongdong_bot.tools.memory_admin delete --scope keyword --keyword 關鍵字 --user-id <id>`
+  - `python -m dongdong_bot.tools.memory_admin reset --user-id <id>`
 
 ## Agent Skills
 
