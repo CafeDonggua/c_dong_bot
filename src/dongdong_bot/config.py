@@ -18,6 +18,8 @@ INTENT_CACHE_FILENAME = "intent_index.json"
 ALLOWLIST_FILENAME = "allowlist.json"
 SCHEDULES_FILENAME = "schedules.json"
 REMINDERS_FILENAME = "reminders.json"
+CRON_TASKS_FILENAME = "cron_tasks.json"
+CRON_RUNS_FILENAME = "cron_runs.json"
 SKILLS_STATE_FILENAME = "skills_state.json"
 CAPABILITIES_FILENAME = "capabilities.yaml"
 MEMORY_SUBDIR = "memory"
@@ -49,6 +51,8 @@ class Config:
     allowlist_path: str = str(Path(MEMORY_DIR) / ALLOWLIST_FILENAME)
     schedules_path: str = str(Path(MEMORY_DIR) / SCHEDULES_FILENAME)
     reminders_path: str = str(Path(MEMORY_DIR) / REMINDERS_FILENAME)
+    cron_tasks_path: str = str(Path(MEMORY_DIR) / CRON_TASKS_FILENAME)
+    cron_runs_path: str = str(Path(MEMORY_DIR) / CRON_RUNS_FILENAME)
     skills_state_path: str = str(Path(MEMORY_DIR) / SKILLS_STATE_FILENAME)
     capabilities_path: str = CAPABILITIES_PATH
     search_api_key: str = ""

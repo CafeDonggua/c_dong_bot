@@ -3,9 +3,10 @@ from __future__ import annotations
 import asyncio
 import time
 from dataclasses import dataclass
-from typing import Callable, Optional
+from typing import Awaitable, Callable, Optional
 
 from telegram import Update
+from telegram.error import Conflict, NetworkError, RetryAfter, TimedOut
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
 from dongdong_bot.cron.scheduler import ReminderScheduler
@@ -25,6 +26,8 @@ AllowlistChecker = Callable[[IncomingMessage], bool]
 
 
 class TelegramClient:
+    COMMAND_NAMES = ("help", "search", "summary", "skill", "allowlist", "cron")
+
     def __init__(
         self,
         token: str,
@@ -48,13 +51,15 @@ class TelegramClient:
             self.monitoring.received()
             message = self._build_message(update)
             if self.allowlist_checker and not self.allowlist_checker(message):
-                await update.message.reply_text("你尚未被授權使用此服務。")
+                await self._send_with_retry(
+                    lambda: update.message.reply_text("你尚未被授權使用此服務。")
+                )
                 return
             loop = asyncio.get_running_loop()
             response = await loop.run_in_executor(None, on_message, message)
             reply_text = getattr(response, "reply", str(response))
             send_start = time.perf_counter()
-            await update.message.reply_text(reply_text)
+            await self._send_with_retry(lambda: update.message.reply_text(reply_text))
             if self.perf_log:
                 send_ms = (time.perf_counter() - send_start) * 1000
                 print(f"[perf] telegram.reply ms={send_ms:.1f}")
@@ -66,13 +71,15 @@ class TelegramClient:
             self.monitoring.received()
             message = self._build_message(update)
             if self.allowlist_checker and not self.allowlist_checker(message):
-                await update.message.reply_text("你尚未被授權使用此服務。")
+                await self._send_with_retry(
+                    lambda: update.message.reply_text("你尚未被授權使用此服務。")
+                )
                 return
             loop = asyncio.get_running_loop()
             response = await loop.run_in_executor(None, on_message, message)
             reply_text = getattr(response, "reply", str(response))
             send_start = time.perf_counter()
-            await update.message.reply_text(reply_text)
+            await self._send_with_retry(lambda: update.message.reply_text(reply_text))
             if self.perf_log:
                 send_ms = (time.perf_counter() - send_start) * 1000
                 print(f"[perf] telegram.reply ms={send_ms:.1f}")
@@ -84,6 +91,8 @@ class TelegramClient:
         async def _error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
             if context.error:
                 self.monitoring.error(context.error)
+                if isinstance(context.error, Conflict):
+                    self.monitoring.info("telegram_conflict_hint=duplicate polling process detected")
 
         async def _reminder_job(context: ContextTypes.DEFAULT_TYPE) -> None:
             if not self.scheduler:
@@ -91,15 +100,18 @@ class TelegramClient:
             due = self.scheduler.collect_due()
             for reminder in due:
                 try:
-                    await context.bot.send_message(chat_id=reminder.chat_id, text=reminder.message)
+                    await self._send_with_retry(
+                        lambda: context.bot.send_message(
+                            chat_id=reminder.chat_id,
+                            text=reminder.message,
+                        )
+                    )
                     self.scheduler.mark_sent(reminder)
                 except Exception as exc:
                     self.scheduler.mark_failed(reminder, str(exc))
 
-        self.app.add_handler(CommandHandler("search", _handle_command))
-        self.app.add_handler(CommandHandler("summary", _handle_command))
-        self.app.add_handler(CommandHandler("skill", _handle_command))
-        self.app.add_handler(CommandHandler("allowlist", _handle_command))
+        for command in self.COMMAND_NAMES:
+            self.app.add_handler(CommandHandler(command, _handle_command))
         self.app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, _handle))
         self.app.add_error_handler(_error_handler)
         self.app.job_queue.run_repeating(
@@ -117,6 +129,28 @@ class TelegramClient:
 
     async def _post_init(self, _: Application) -> None:
         self.monitoring.startup()
+
+    async def _send_with_retry(
+        self,
+        operation: Callable[[], Awaitable[object]],
+        retries: int = 1,
+    ) -> None:
+        last_error: Exception | None = None
+        for attempt in range(retries + 1):
+            try:
+                await operation()
+                return
+            except (TimedOut, NetworkError, RetryAfter) as exc:
+                last_error = exc
+                self.monitoring.error(exc)
+                if attempt >= retries:
+                    break
+                delay = 1.0 + attempt
+                if isinstance(exc, RetryAfter):
+                    delay = max(delay, float(exc.retry_after))
+                await asyncio.sleep(delay)
+        if last_error:
+            raise last_error
 
     @staticmethod
     def _build_message(update: Update) -> IncomingMessage:

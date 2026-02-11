@@ -52,6 +52,7 @@ class ScheduleParser:
                     message="一次只能指定一個行程 ID，請重新輸入。",
                 )
             schedule_id = ids[0] if ids else None
+            invalid_id = self._extract_non_hex_id(cleaned) if not schedule_id else None
             if delete_intent and complete_intent:
                 return ScheduleCommand(
                     action="clarify",
@@ -66,23 +67,36 @@ class ScheduleParser:
                     title="",
                     schedule_id=schedule_id,
                     intent="invalid" if not schedule_id else "delete",
-                    message="請先提供行程 ID，可先查詢行程清單。" if not schedule_id else "",
+                    message=(
+                        "行程 ID 格式不正確，請確認後再試。"
+                        if invalid_id
+                        else ("請先提供行程 ID，可先查詢行程清單。" if not schedule_id else "")
+                    ),
                 )
             return ScheduleCommand(
                 action="complete",
                 title="",
                 schedule_id=schedule_id,
                 intent="invalid" if not schedule_id else "complete",
-                message="請先提供行程 ID，可先查詢行程清單。" if not schedule_id else "",
+                message=(
+                    "行程 ID 格式不正確，請確認後再試。"
+                    if invalid_id
+                    else ("請先提供行程 ID，可先查詢行程清單。" if not schedule_id else "")
+                ),
             )
         update_id = self._extract_id(cleaned)
         if self._is_update(cleaned):
             if not update_id:
+                invalid_id = self._extract_non_hex_id(cleaned)
                 return ScheduleCommand(
                     action="clarify",
                     title="",
                     intent="invalid",
-                    message="請先提供行程 ID，可先查詢行程清單。",
+                    message=(
+                        "行程 ID 格式不正確，請確認後再試。"
+                        if invalid_id
+                        else "請先提供行程 ID，可先查詢行程清單。"
+                    ),
                 )
             start_time = self._extract_datetime(cleaned, now)
             end_time = self._extract_end_datetime(cleaned, now)
@@ -217,6 +231,16 @@ class ScheduleParser:
     def _extract_id(text: str) -> Optional[str]:
         ids = ScheduleParser._extract_ids(text)
         return ids[0] if ids else None
+
+    @staticmethod
+    def _extract_non_hex_id(text: str) -> Optional[str]:
+        for token in re.findall(r"[A-Za-z0-9]{8,}", text):
+            if re.fullmatch(r"[0-9a-fA-F]{8,}", token):
+                continue
+            if re.fullmatch(r"[0-9]{8,}", token):
+                continue
+            return token
+        return None
 
     @staticmethod
     def _is_confirm_reply(text: str) -> bool:

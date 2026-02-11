@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 import json
 import hashlib
-from typing import Iterable, Sequence, Tuple
+from typing import Iterable, Tuple
 
 from dongdong_bot.lib.embedding_client import EmbeddingClient
 from dongdong_bot.lib.vector_math import cosine_similarity, top_k_scored

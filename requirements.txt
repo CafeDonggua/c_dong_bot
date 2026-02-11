@@ -2,3 +2,4 @@ openai
 python-telegram-bot[job-queue]
 python-dotenv
 pytest
+ruff

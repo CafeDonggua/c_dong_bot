@@ -1,5 +1,8 @@
 # Release Notes
 
+> 本檔僅記錄正式穩定版（main）。  
+> 預覽版（beta/rc）請以 GitHub `Pre-release` 與 `docs/release-policy.md` 為準。
+
 ## 1.0.0 (2026-02-10)
 
 ### 重點更新

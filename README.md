@@ -2,6 +2,28 @@
 
 以目標導向（GOAP）方式運作的 Telegram 私聊機器人，支援語意回覆、記憶保存與回想。
 
+## 版本通道
+
+- 穩定版（建議）：`v1.0.x`，來源 `main`
+- 預覽版（測試用）：`v1.1.0-beta.x` / `v1.1.0-rc.x`，來源 `next`
+
+### 下載方式
+
+- 穩定版（推薦）：
+
+```bash
+git fetch --tags
+git checkout v1.0.0
+```
+
+- 預覽版（僅測試）：
+
+```bash
+git checkout next
+```
+
+> 若要查看發布規則與流程，請參考 `docs/release-policy.md`。
+
 ## 功能
 
 - Telegram 私聊語意回覆
@@ -174,17 +196,40 @@ scripts/run_regression.sh
 
 ## 管理指令
 
+- `/help`：顯示所有主要指令與範例
 - `/skill list`：列出技能清單
 - `/skill enable <name>`：啟用技能
 - `/skill disable <name>`：停用技能
 - `/allowlist list`：列出允許名單
 - `/allowlist add <user_id> [channel]`：加入允許名單
 - `/allowlist remove <user_id> [channel]`：移除允許名單
+- `/cron help`：顯示 cron 指令用法
+- `/cron add at <YYYY-MM-DDTHH:MM> <任務名稱> | <提醒訊息>`：新增單次任務
+- `/cron add every <秒數> <任務名稱> | <提醒訊息>`：新增週期任務
+- `/cron add cron "<分 時 日 月 週>" <任務名稱> | <提醒訊息>`：新增 cron 表達式任務
+- `/cron list [scheduled|paused|completed|failed]`：查詢任務清單
+- `/cron remove <task_id>`：刪除任務
+- `/cron enable <task_id>`：啟用任務
+- `/cron disable <task_id>`：停用任務
 - 記憶管理（CLI）：
   - `python -m dongdong_bot.tools.memory_admin delete --scope all --user-id <id> --channel telegram`
   - `python -m dongdong_bot.tools.memory_admin delete --scope range --start YYYY-MM-DD --end YYYY-MM-DD --user-id <id>`
   - `python -m dongdong_bot.tools.memory_admin delete --scope keyword --keyword 關鍵字 --user-id <id>`
   - `python -m dongdong_bot.tools.memory_admin reset --user-id <id>`
+
+## 常用指令速查表
+
+| 指令 | 作用 | 範例 |
+| --- | --- | --- |
+| `/help` | 顯示指令總覽 | `/help` |
+| `/search <關鍵字>` | 關鍵字搜尋 | `/search 台灣能源政策` |
+| `/summary <網址>` | 連結摘要 | `/summary https://example.com` |
+| `/cron help` | 查看 cron 用法 | `/cron help` |
+| `/cron add at ...` | 建立單次任務 | `/cron add at 2026-02-11T23:50 單次提醒 | 23:50 開會` |
+| `/cron add every ...` | 建立週期任務 | `/cron add every 60 喝水提醒 | 請喝水` |
+| `/cron list` | 查詢任務列表 | `/cron list` |
+| `/skill list` | 查看技能狀態 | `/skill list` |
+| `/allowlist list` | 查看允許名單 | `/allowlist list` |
 
 ## Agent Skills
 

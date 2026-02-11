@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from datetime import datetime
 
 from dongdong_bot.main import _semantic_memory_fallback
 from dongdong_bot.agent.memory import MemoryStore
@@ -40,7 +41,7 @@ def test_semantic_memory_fallback_hits(tmp_path: Path) -> None:
 
 def test_fallback_uses_recent_entries_when_index_missing(tmp_path: Path) -> None:
     store = MemoryStore(str(tmp_path))
-    today = "2026-02-04"
+    today = datetime.now().strftime("%Y-%m-%d")
     memory_path = store.memory_dir / f"{today}.md"
     memory_path.write_text("- 後天下午要剪頭髮\n", encoding="utf-8")
 

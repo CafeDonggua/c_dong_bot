@@ -4,11 +4,16 @@ import time
 from datetime import datetime
 import json
 from pathlib import Path
+import re
 
 from openai import NotFoundError, OpenAI, PermissionDeniedError
 
 from dongdong_bot.agent.allowlist_store import AllowlistEntry, AllowlistStore
 from dongdong_bot.agent.capability_catalog import CapabilityCatalog
+from dongdong_bot.agent.cron_parser import CronParser
+from dongdong_bot.agent.cron_run_store import CronRunStore
+from dongdong_bot.agent.cron_service import CronService
+from dongdong_bot.agent.cron_store import CronStore
 from dongdong_bot.agent.intent_router import IntentRouter
 from dongdong_bot.agent.reminder_store import ReminderStore
 from dongdong_bot.agent.schedule_parser import ScheduleCommand, ScheduleParser
@@ -21,16 +26,17 @@ from dongdong_bot.agent.memory import MemoryStore, is_short_term_query, search_s
 from dongdong_bot.channels.telegram import IncomingMessage, TelegramClient
 from dongdong_bot.config import load_config
 from dongdong_bot.cron.scheduler import ReminderScheduler
+from dongdong_bot.cron.schedule_rules import next_run_at
 from dongdong_bot.lib.embedding_client import EmbeddingClient
 from dongdong_bot.lib.intent_classifier import IntentClassifier, IntentExample
 from dongdong_bot.lib.search_client import SearchClient
 from dongdong_bot.lib.search_formatter import SearchFormatter
+from dongdong_bot.lib.search_schema import SearchResponse
 from dongdong_bot.lib.nl_search_topic import NLSearchTopicExtractor
 from dongdong_bot.lib.report_content import normalize_report_content
 from dongdong_bot.lib.report_writer import ReportWriter
 from dongdong_bot.lib.response_style import ResponseStyler
 from dongdong_bot.monitoring import Monitoring
-from dongdong_bot.lib.vector_math import cosine_similarity, top_k_scored
 
 
 SKILL_MEMORY_SAVE = "memory-save"
@@ -44,6 +50,20 @@ DECISION_LABELS = {
     "search_report": "搜尋整理",
     "direct_reply": "一般回覆",
 }
+
+
+def _help_text() -> str:
+    return (
+        "指令說明：\n"
+        "/help：顯示指令總覽\n"
+        "/search <關鍵字>：例如 /search 台灣能源政策\n"
+        "/summary <網址>：例如 /summary https://example.com\n"
+        "/cron help：查看排程用法\n"
+        "/cron add every 60 喝水提醒 | 請喝水\n"
+        "/cron list：列出目前排程\n"
+        "/skill list：查看技能狀態\n"
+        "/allowlist list：查看允許名單"
+    )
 
 
 class OpenAIClient:
@@ -69,7 +89,27 @@ def _handle_search_command(
         return "請提供關鍵字，例如：/search 台灣能源政策"
     try:
         response = search_client.search_keyword(query)
-        return formatter.format(response)
+        if _search_result_relevant(query, response):
+            return formatter.format(response)
+
+        refined_query = _refine_search_query(query)
+        if refined_query != query:
+            retry_response = search_client.search_keyword(refined_query)
+            if _search_result_relevant(query, retry_response):
+                return (
+                    f"{formatter.format(retry_response)}\n\n"
+                    f"（已自動改用更精準查詢：{refined_query}）"
+                )
+
+        hint = (
+            f"建議可再試：/search {refined_query}"
+            if refined_query != query
+            else "建議：補充關鍵字（時間/地點/主詞）後再試。"
+        )
+        return (
+            "結果可能偏離主題，先提供目前可用內容：\n\n"
+            f"{formatter.format(response)}\n\n{hint}"
+        )
     except Exception as exc:
         if monitoring is not None:
             monitoring.error(exc)
@@ -118,6 +158,62 @@ def _fallback_reply(kind: str) -> str:
     return mapping.get(kind, "目前服務暫時無法使用，請稍後再試。")
 
 
+def _search_result_relevant(query: str, response: SearchResponse) -> bool:
+    terms = _search_query_terms(query)
+    if not terms:
+        return True
+    haystack = " ".join(
+        part.strip()
+        for part in [response.summary, *response.bullets, response.raw_text]
+        if part and part.strip()
+    ).lower()
+    if not haystack:
+        return True
+    matches = sum(1 for term in terms if term in haystack)
+    if any(len(term) >= 4 for term in terms):
+        return matches >= 1
+    return matches >= max(1, len(terms) // 2)
+
+
+def _search_query_terms(query: str) -> list[str]:
+    tokens = re.findall(r"[A-Za-z0-9\u4e00-\u9fff]{2,}", query.lower())
+    stopwords = {"請", "幫我", "查詢", "搜尋", "一下", "最新", "資訊"}
+    terms: list[str] = []
+    for token in tokens:
+        if token in stopwords:
+            continue
+        # For contiguous CJK strings (e.g. "台灣新核能"), add bigrams to improve recall.
+        if re.fullmatch(r"[\u4e00-\u9fff]+", token) and len(token) >= 4:
+            for idx in range(len(token) - 1):
+                bigram = token[idx : idx + 2]
+                if bigram not in stopwords:
+                    terms.append(bigram)
+            continue
+        terms.append(token)
+    deduped: list[str] = []
+    seen = set()
+    for term in terms:
+        if term in seen:
+            continue
+        seen.add(term)
+        deduped.append(term)
+    return deduped
+
+
+def _refine_search_query(query: str) -> str:
+    additions: list[str] = []
+    now = datetime.now()
+    has_year = bool(re.search(r"\b20\d{2}\b", query))
+    has_time_hint = any(keyword in query for keyword in ("今天", "近期", "最近", "今年", "本月"))
+    if not has_year and not has_time_hint:
+        additions.append(str(now.year))
+    if not any(keyword in query for keyword in ("新聞", "政策", "法規", "趨勢", "近況")):
+        additions.append("新聞")
+    if not additions:
+        return query.strip()
+    return f"{query.strip()} {' '.join(additions)}"
+
+
 def _handle_skill_command(text: str, registry: SkillRegistry) -> str:
     parts = text.strip().split()
     if len(parts) == 1 or parts[1] == "list":
@@ -134,7 +230,10 @@ def _handle_skill_command(text: str, registry: SkillRegistry) -> str:
         enabled = parts[1] == "enable"
         registry.set_enabled(target, enabled)
         return f"技能 {target} 已{'啟用' if enabled else '停用'}。"
-    return "用法：/skill list | /skill enable <name> | /skill disable <name>"
+    return (
+        "用法：/skill list | /skill enable <name> | /skill disable <name>\n"
+        "例如：/skill enable memory-recall"
+    )
 
 
 def _handle_allowlist_command(text: str, store: AllowlistStore) -> str:
@@ -153,7 +252,11 @@ def _handle_allowlist_command(text: str, store: AllowlistStore) -> str:
             return f"已加入允許名單：{user_id} ({channel})"
         store.remove(user_id, channel)
         return f"已移除允許名單：{user_id} ({channel})"
-    return "用法：/allowlist list | /allowlist add <user_id> [channel] | /allowlist remove <user_id> [channel]"
+    return (
+        "用法：/allowlist list | /allowlist add <user_id> [channel] | "
+        "/allowlist remove <user_id> [channel]\n"
+        "例如：/allowlist add 123456789 telegram"
+    )
 
 
 def _append_decision_note(reply: str, capability: str) -> str:
@@ -230,26 +333,27 @@ def _semantic_memory_fallback(
     memory_store: MemoryStore,
     min_score: float = 0.25,
 ) -> tuple[list[str], str]:
-    embedding = embedding_client.embed(text)
-    semantic_hits = memory_store.semantic_search(embedding, min_score=min_score)
-    semantic_hits = memory_store.filter_by_score(semantic_hits)
-    if semantic_hits:
-        return [item for item, _score in semantic_hits], "embedding_index"
+    if memory_store.embedding_index_path.exists():
+        embedding = embedding_client.embed(text)
+        semantic_hits = memory_store.semantic_search(embedding, min_score=min_score)
+        semantic_hits = memory_store.filter_by_score(semantic_hits)
+        if semantic_hits:
+            return [item for item, _score in semantic_hits], "embedding_index"
 
     candidates = memory_store.recent_entries()
     if not candidates:
         return [], "recent_empty"
-    scored = []
+    deduped: list[str] = []
+    seen = set()
     for item in candidates:
-        try:
-            item_vector = embedding_client.embed(item)
-        except Exception:
+        if item in seen:
             continue
-        score = cosine_similarity(embedding, item_vector)
-        if score >= min_score:
-            scored.append((item, score))
-    if scored:
-        return [item for item, _score in top_k_scored(scored, 5)], "recent_semantic"
+        seen.add(item)
+        deduped.append(item)
+        if len(deduped) >= 5:
+            break
+    if deduped:
+        return deduped, "recent_semantic"
     return [], "no_match"
 
 
@@ -348,13 +452,7 @@ def _memory_query_hint(
             return True, f"intent_score:{score:.2f}", 0
     if not _has_memory_keywords(text):
         return False, "no_hint", 0
-    try:
-        results, source = _semantic_memory_fallback(
-            text, embedding_client, memory_store, min_score=min_score
-        )
-    except Exception:
-        return True, "keyword", 0
-    return True, source if results else "keyword", len(results)
+    return True, "keyword", 0
 
 
 def _is_explicit_memory_save(text: str) -> bool:
@@ -374,6 +472,7 @@ def _has_memory_keywords(text: str) -> bool:
         "喜歡",
         "喝什麼",
         "吃什麼",
+        "運動",
         "行程",
         "安排",
         "待辦",
@@ -418,6 +517,65 @@ def _coerce_message(payload: IncomingMessage | str) -> tuple[str, str, str, str]
         channel = payload.channel
         return text, user_id, chat_id, channel
     return str(payload), "local", "local", "local"
+
+
+def _recover_cron_tasks(cron_store: CronStore, monitoring: Monitoring, now: datetime | None = None) -> None:
+    current = now or datetime.now()
+    repaired = 0
+    completed = 0
+    failed = 0
+    for task in cron_store.list():
+        if not task.enabled:
+            continue
+        if task.status == "completed":
+            continue
+        if task.status == "failed":
+            continue
+        if task.next_run_at is not None:
+            continue
+        try:
+            next_time = next_run_at(
+                task.schedule_kind,
+                task.schedule_value,
+                reference_time=current,
+                last_run_at=task.last_run_at,
+            )
+        except ValueError as exc:
+            cron_store.touch_status(
+                task.task_id,
+                status="failed",
+                next_run_at=None,
+                last_run_at=task.last_run_at,
+                last_status="error",
+                last_error=str(exc),
+            )
+            failed += 1
+            continue
+        if next_time is None:
+            cron_store.touch_status(
+                task.task_id,
+                status="completed",
+                next_run_at=None,
+                last_run_at=task.last_run_at,
+                last_status=task.last_status,
+                last_error=task.last_error,
+            )
+            completed += 1
+            continue
+        cron_store.touch_status(
+            task.task_id,
+            status="scheduled",
+            next_run_at=next_time,
+            last_run_at=task.last_run_at,
+            last_status=task.last_status,
+            last_error=task.last_error,
+        )
+        repaired += 1
+    if repaired or completed or failed:
+        monitoring.info(
+            "cron_recover "
+            f"repaired={repaired} completed={completed} failed={failed}"
+        )
 
 
 def main() -> None:
@@ -483,10 +641,20 @@ def main() -> None:
         config.memory_dir,
         embedding_index_path=config.embedding_index_path,
     )
+    cron_store = CronStore(config.cron_tasks_path)
+    cron_run_store = CronRunStore(config.cron_runs_path)
+    cron_parser = CronParser()
+    cron_service = CronService(cron_store)
+    _recover_cron_tasks(cron_store, monitoring)
     schedule_store = ScheduleStore(config.schedules_path)
     reminder_store = ReminderStore(config.reminders_path)
     schedule_parser = ScheduleParser()
-    scheduler = ReminderScheduler(schedule_store, reminder_store)
+    scheduler = ReminderScheduler(
+        schedule_store,
+        reminder_store,
+        cron_store=cron_store,
+        cron_run_store=cron_run_store,
+    )
     session_store = SessionStore()
     schedule_service = ScheduleService(schedule_store, reminder_store, session_store)
     skills_dir = Path(__file__).resolve().parents[2] / "resources" / "skills"
@@ -505,6 +673,10 @@ def main() -> None:
     monitoring.info(
         f"memory_dir={memory_store.memory_dir} reports_dir={memory_store.reports_dir}"
     )
+    monitoring.info(
+        f"cron_tasks_path={config.cron_tasks_path} cron_runs_path={config.cron_runs_path}"
+    )
+    _ = (cron_store, cron_run_store, cron_parser, cron_service)
 
     def handle_message(payload: IncomingMessage | str):
         start_time = time.perf_counter()
@@ -523,10 +695,18 @@ def main() -> None:
                 pending_result = schedule_service.bulk_delete_prompt(user_id)
             return _append_decision_note(pending_result.reply, "schedule_list")
 
+        if text.startswith("/help"):
+            return _help_text()
         if text.startswith("/skill"):
             return _handle_skill_command(text, skill_registry)
         if text.startswith("/allowlist"):
             return _handle_allowlist_command(text, allowlist_store)
+        if text.startswith("/cron"):
+            cron_command = cron_parser.parse(text)
+            if cron_command is None:
+                return "無法解析 /cron 指令，請使用 /cron help。"
+            result = cron_service.handle(cron_command, user_id, chat_id)
+            return result.reply
 
         if text.startswith("/search"):
             if not skill_registry.is_enabled(SKILL_SEARCH_REPORT):
@@ -632,8 +812,22 @@ def main() -> None:
             )
 
         forced_decision = None
-        if decision.capability in {"memory_save", "memory_query", "direct_reply"}:
+        if decision.capability in {"memory_save", "memory_query"}:
             forced_decision = decision.capability
+        elif decision.capability == "direct_reply":
+            hinted = False
+            if skill_registry.is_enabled(SKILL_MEMORY_RECALL):
+                hinted, hint_source, hint_hits = _memory_query_hint(
+                    text,
+                    intent_classifier,
+                    embedding_client,
+                    memory_store,
+                )
+                if hinted:
+                    monitoring.info(
+                        f"memory_query_hint=1 source={hint_source} hits={hint_hits}"
+                    )
+            forced_decision = "memory_query" if hinted else "direct_reply"
         try:
             response = goap.respond(
                 text,
