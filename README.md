@@ -189,6 +189,10 @@ scripts/run_regression.sh
   - 「我有哪些行程」
 - 行程更新：
   - 「修改 <行程ID> 明天 11:00 改成 例會」
+- 自然語句 Cron（重複提醒）：
+  - 「每天 9 點提醒我喝水」
+  - 「每 30 分鐘提醒站起來」
+  - 「每週一 18:20 提醒我交週報」
 - 搜尋報告：
   - 「幫我整理 NVIDIA 最新消息」→ 產出含摘要、重點、來源與查詢資訊的報告檔案
 - Nanobot 對照報告：
@@ -211,6 +215,10 @@ scripts/run_regression.sh
 - `/cron remove <task_id>`：刪除任務
 - `/cron enable <task_id>`：啟用任務
 - `/cron disable <task_id>`：停用任務
+- 自然語句建立重複任務（免指令）：
+  - `每天 9 點提醒我喝水`
+  - `每 30 分鐘提醒站起來`
+  - `每週一 18:20 提醒我交週報`
 - 記憶管理（CLI）：
   - `python -m dongdong_bot.tools.memory_admin delete --scope all --user-id <id> --channel telegram`
   - `python -m dongdong_bot.tools.memory_admin delete --scope range --start YYYY-MM-DD --end YYYY-MM-DD --user-id <id>`
@@ -227,6 +235,7 @@ scripts/run_regression.sh
 | `/cron help` | 查看 cron 用法 | `/cron help` |
 | `/cron add at ...` | 建立單次任務 | `/cron add at 2026-02-11T23:50 單次提醒 | 23:50 開會` |
 | `/cron add every ...` | 建立週期任務 | `/cron add every 60 喝水提醒 | 請喝水` |
+| `自然語句（重複提醒）` | 免指令建立 Cron 任務 | `每天 9 點提醒我喝水` |
 | `/cron list` | 查詢任務列表 | `/cron list` |
 | `/skill list` | 查看技能狀態 | `/skill list` |
 | `/allowlist list` | 查看允許名單 | `/allowlist list` |
