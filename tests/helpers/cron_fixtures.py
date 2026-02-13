@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from dongdong_bot.agent.cron_parser import CronCommand
 from dongdong_bot.agent.cron_models import CronRunRecord, CronTask
 
 
@@ -55,4 +56,21 @@ def build_cron_run(
         delivery_target=delivery_target,
         result=result,
         error_message=error_message,
+    )
+
+
+def build_add_command(
+    *,
+    name: str = "每日檢查",
+    message: str | None = None,
+    schedule_kind: str = "every",
+    schedule_value: str = "60",
+) -> CronCommand:
+    final_message = message if message is not None else name
+    return CronCommand(
+        action="add",
+        name=name,
+        message=final_message,
+        schedule_kind=schedule_kind,
+        schedule_value=schedule_value,
     )

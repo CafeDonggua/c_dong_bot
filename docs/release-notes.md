@@ -3,6 +3,22 @@
 > 本檔僅記錄正式穩定版（main）。  
 > 預覽版（beta/rc）請以 GitHub `Pre-release` 與 `docs/release-policy.md` 為準。
 
+## Unreleased (next / 1.1.0 preview)
+
+> 以下為預備版變更摘要，尚未列為穩定版發布內容。
+
+### 重點更新
+
+- 新增自然語句 Cron 分流（每天/每週/每隔 N 單位）並轉為既有 Cron 任務流程
+- 單次時間事件維持走既有行程流程，避免誤建重複任務
+- `/cron help` 擴充自然語句範例，保留原命令式入口
+- 補齊自然語句路由、邊界分流與相容回歸測試
+
+### 驗證摘要
+
+- 核心回歸：`40 passed`（cron + schedule + nl-routing）
+- 本次改動檔案 lint：`ruff check` 全綠
+
 ## 1.0.0 (2026-02-10)
 
 ### 重點更新

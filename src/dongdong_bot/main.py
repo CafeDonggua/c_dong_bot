@@ -11,6 +11,8 @@ from openai import NotFoundError, OpenAI, PermissionDeniedError
 from dongdong_bot.agent.allowlist_store import AllowlistEntry, AllowlistStore
 from dongdong_bot.agent.capability_catalog import CapabilityCatalog
 from dongdong_bot.agent.cron_parser import CronParser
+from dongdong_bot.agent.cron_nl_parser import CronNaturalLanguageParser
+from dongdong_bot.agent.cron_nl_router import CronNLRouter
 from dongdong_bot.agent.cron_run_store import CronRunStore
 from dongdong_bot.agent.cron_service import CronService
 from dongdong_bot.agent.cron_store import CronStore
@@ -43,6 +45,7 @@ SKILL_MEMORY_SAVE = "memory-save"
 SKILL_MEMORY_RECALL = "memory-recall"
 SKILL_SEARCH_REPORT = "nl-search-report"
 DECISION_LABELS = {
+    "cron_add": "排程提醒",
     "schedule_add": "行程提醒",
     "schedule_list": "行程查詢",
     "memory_save": "記憶保存",
@@ -61,6 +64,7 @@ def _help_text() -> str:
         "/cron help：查看排程用法\n"
         "/cron add every 60 喝水提醒 | 請喝水\n"
         "/cron list：列出目前排程\n"
+        "自然語句也可建立重複提醒：每天 9 點提醒我喝水\n"
         "/skill list：查看技能狀態\n"
         "/allowlist list：查看允許名單"
     )
@@ -644,6 +648,8 @@ def main() -> None:
     cron_store = CronStore(config.cron_tasks_path)
     cron_run_store = CronRunStore(config.cron_runs_path)
     cron_parser = CronParser()
+    cron_nl_parser = CronNaturalLanguageParser()
+    cron_nl_router = CronNLRouter(cron_nl_parser)
     cron_service = CronService(cron_store)
     _recover_cron_tasks(cron_store, monitoring)
     schedule_store = ScheduleStore(config.schedules_path)
@@ -676,7 +682,7 @@ def main() -> None:
     monitoring.info(
         f"cron_tasks_path={config.cron_tasks_path} cron_runs_path={config.cron_runs_path}"
     )
-    _ = (cron_store, cron_run_store, cron_parser, cron_service)
+    _ = (cron_store, cron_run_store, cron_parser, cron_nl_parser, cron_nl_router, cron_service)
 
     def handle_message(payload: IncomingMessage | str):
         start_time = time.perf_counter()
@@ -716,6 +722,37 @@ def main() -> None:
             if not skill_registry.is_enabled(SKILL_SEARCH_REPORT):
                 return "搜尋整理技能已停用。"
             return _handle_summary_command(text, search_client, search_formatter, monitoring)
+
+        cron_nl_decision = cron_nl_router.route(text, now=datetime.now())
+        if cron_nl_decision.route_target == "cron_create" and cron_nl_decision.parse_result:
+            parsed = cron_nl_decision.parse_result
+            monitoring.route(
+                "cron_create",
+                cron_nl_decision.reason,
+                detail=(
+                    f"schedule={parsed.schedule_kind}:{parsed.schedule_value}"
+                    f" title={parsed.title}"
+                ),
+            )
+            command = cron_service.build_add_command(
+                name=parsed.title,
+                message=parsed.message or parsed.title,
+                schedule_kind=parsed.schedule_kind or "",
+                schedule_value=parsed.schedule_value or "",
+            )
+            result = cron_service.handle(command, user_id, chat_id, now=datetime.now())
+            return _append_decision_note(result.reply, "cron_add")
+
+        if cron_nl_decision.route_target == "schedule":
+            monitoring.route("schedule", cron_nl_decision.reason)
+            schedule_command = schedule_parser.parse(text)
+            if schedule_command and schedule_command.action == "add" and schedule_command.start_time:
+                result = schedule_service.handle(schedule_command, user_id, chat_id)
+                return _append_decision_note(result.reply, "schedule_add")
+
+        if cron_nl_decision.route_target == "clarify":
+            monitoring.route("clarify", cron_nl_decision.reason)
+            return _append_decision_note(cron_nl_decision.clarification_hint, "cron_add")
 
         decision = intent_router.route(text)
         monitoring.info(

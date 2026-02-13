@@ -67,6 +67,12 @@ class Monitoring:
             cleaned = f"{cleaned} {detail}"
         self._emit("perf", cleaned)
 
+    def route(self, target: str, reason: str, detail: str | None = None) -> None:
+        cleaned = f"target={target} reason={reason}"
+        if detail:
+            cleaned = f"{cleaned} {detail}"
+        self._emit("route", cleaned)
+
     def _emit(self, event_type: str, summary: str, suppressed_count: int = 0) -> None:
         timestamp = self._now_fn()
         cleaned = self._sanitize(summary)
