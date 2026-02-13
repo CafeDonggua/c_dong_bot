@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from types import SimpleNamespace
 
+from dongdong_bot.agent.cron_nl_router import CronNLRouter
 from dongdong_bot.agent.cron_parser import CronParser
 from dongdong_bot.agent.cron_run_store import CronRunStore
 from dongdong_bot.agent.cron_service import CronService
@@ -105,3 +106,33 @@ def test_cron_regression_restart_recovery_and_owner_isolation(tmp_path):
     due = scheduler.collect_due(now=datetime(2026, 2, 11, 9, 2, 0))
     cron_due = [item for item in due if isinstance(item, CronPayload)]
     assert cron_due
+
+
+def test_cron_regression_nl_route_and_command_contract(tmp_path):
+    cron_store = CronStore(str(tmp_path / "cron_tasks.json"))
+    parser = CronParser()
+    service = CronService(cron_store)
+    nl_router = CronNLRouter()
+
+    decision = nl_router.route("每天 9 點提醒我喝水", now=datetime(2026, 2, 11, 8, 50, 0))
+    assert decision.route_target == "cron_create"
+    assert decision.parse_result is not None
+    add_command = service.build_add_command(
+        name=decision.parse_result.title,
+        message=decision.parse_result.message,
+        schedule_kind=decision.parse_result.schedule_kind or "",
+        schedule_value=decision.parse_result.schedule_value or "",
+    )
+    create_result = service.handle(add_command, user_id="user-1", chat_id="chat-1", now=datetime(2026, 2, 11, 8, 50, 0))
+    assert "已建立 /cron 任務" in create_result.reply
+
+    command_add = parser.parse("/cron add every 60 站立提醒 | 起來動一動")
+    assert command_add is not None
+    command_result = service.handle(command_add, user_id="user-1", chat_id="chat-1", now=datetime(2026, 2, 11, 8, 50, 0))
+    assert "已建立 /cron 任務" in command_result.reply
+
+    list_cmd = parser.parse("/cron list")
+    assert list_cmd is not None
+    list_result = service.handle(list_cmd, user_id="user-1", chat_id="chat-1")
+    assert "喝水" in list_result.reply
+    assert "站立提醒" in list_result.reply

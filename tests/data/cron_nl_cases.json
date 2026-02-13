@@ -1,0 +1,57 @@
+[
+  {
+    "name": "daily_morning",
+    "text": "每天 9 點提醒我喝水",
+    "expected_route": "cron_create",
+    "expected_schedule_kind": "cron",
+    "expected_schedule_value": "0 9 * * *",
+    "expected_title": "喝水"
+  },
+  {
+    "name": "daily_with_minutes",
+    "text": "每天 09:30 提醒站起來",
+    "expected_route": "cron_create",
+    "expected_schedule_kind": "cron",
+    "expected_schedule_value": "30 9 * * *",
+    "expected_title": "站起來"
+  },
+  {
+    "name": "weekly",
+    "text": "每週一 18:20 提醒我交週報",
+    "expected_route": "cron_create",
+    "expected_schedule_kind": "cron",
+    "expected_schedule_value": "20 18 * * 1",
+    "expected_title": "交週報"
+  },
+  {
+    "name": "interval_minutes",
+    "text": "每 30 分鐘提醒站起來",
+    "expected_route": "cron_create",
+    "expected_schedule_kind": "every",
+    "expected_schedule_value": "1800",
+    "expected_title": "站起來"
+  },
+  {
+    "name": "interval_hours",
+    "text": "每隔2小時提醒我伸展",
+    "expected_route": "cron_create",
+    "expected_schedule_kind": "every",
+    "expected_schedule_value": "7200",
+    "expected_title": "伸展"
+  },
+  {
+    "name": "single_event",
+    "text": "明天下午兩點測試會議",
+    "expected_route": "schedule"
+  },
+  {
+    "name": "mixed_repeat_and_single",
+    "text": "明天開始每天 9 點提醒我開會",
+    "expected_route": "clarify"
+  },
+  {
+    "name": "incomplete_repeat",
+    "text": "每天提醒我喝水",
+    "expected_route": "clarify"
+  }
+]

@@ -18,3 +18,5 @@ specs/
 AGENTS.md
 VERSION_1_0_CHECKLIST.md
 data/
+!tests/data/
+!tests/data/*.json
