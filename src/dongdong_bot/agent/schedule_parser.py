@@ -121,7 +121,7 @@ class ScheduleParser:
 
     @staticmethod
     def is_schedule_hint(text: str) -> bool:
-        keywords = ("行程", "安排", "開會", "剪頭髮", "看醫生", "提醒", "約", "排程")
+        keywords = ("行程", "安排", "開會", "會議", "剪頭髮", "看醫生", "提醒", "約", "排程")
         return any(keyword in text for keyword in keywords)
 
     @staticmethod
@@ -135,7 +135,11 @@ class ScheduleParser:
     def has_time_hint(text: str) -> bool:
         return bool(
             re.search(r"(\d{1,2}):(\d{2})", text)
-            or re.search(r"(早上|上午|下午|晚上|傍晚)?\s*(\d{1,2})點(半)?", text)
+            or re.search(r"(早上|上午|下午|晚上|傍晚)?\s*(\d{1,2})\s*點(半)?", text)
+            or re.search(
+                r"(早上|上午|下午|晚上|傍晚)?\s*([一二三四五六七八九十兩]{1,2})\s*點(半)?",
+                text,
+            )
         )
 
     def _is_list(self, text: str) -> bool:
@@ -221,7 +225,12 @@ class ScheduleParser:
     @staticmethod
     def _is_add(text: str) -> bool:
         keywords = ("記錄", "紀錄", "新增行程", "安排", "提醒")
-        return any(keyword in text for keyword in keywords)
+        if any(keyword in text for keyword in keywords):
+            return True
+        has_datetime = ScheduleParser.has_date_hint(text) and ScheduleParser.has_time_hint(text)
+        if has_datetime and ScheduleParser.is_schedule_hint(text):
+            return True
+        return False
 
     @staticmethod
     def _extract_ids(text: str) -> list[str]:
@@ -270,7 +279,7 @@ class ScheduleParser:
             hour = int(time_match.group(1))
             minute = int(time_match.group(2))
         else:
-            period_match = re.search(r"(早上|上午|下午|晚上|傍晚)?\s*(\d{1,2})點(半)?", text)
+            period_match = re.search(r"(早上|上午|下午|晚上|傍晚)?\s*(\d{1,2})\s*點(半)?", text)
             if period_match:
                 period = period_match.group(1) or ""
                 hour = int(period_match.group(2))
@@ -281,7 +290,7 @@ class ScheduleParser:
                     hour = 0
             else:
                 cn_match = re.search(
-                    r"(早上|上午|下午|晚上|傍晚)?\s*([一二三四五六七八九十兩]{1,2})點(半)?",
+                    r"(早上|上午|下午|晚上|傍晚)?\s*([一二三四五六七八九十兩]{1,2})\s*點(半)?",
                     text,
                 )
                 if cn_match:
@@ -358,6 +367,11 @@ class ScheduleParser:
     def _extract_title(text: str) -> str:
         stripped = re.sub(r"\d{4}-\d{2}-\d{2}", "", text)
         stripped = re.sub(r"\d{1,2}:\d{2}", "", stripped)
+        stripped = re.sub(
+            r"(?:早上|上午|下午|晚上|傍晚)?\s*(?:\d{1,2}|[一二三四五六七八九十兩]{1,2})點(?:半)?",
+            "",
+            stripped,
+        )
         stripped = re.sub(r"[0-9a-fA-F]{8,}", "", stripped)
         stripped = re.sub(r"(?:描述|說明|備註)[:：].*", "", stripped)
         for keyword in (

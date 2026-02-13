@@ -19,6 +19,22 @@ class CronService:
     def __init__(self, cron_store: CronStore) -> None:
         self.cron_store = cron_store
 
+    @staticmethod
+    def build_add_command(
+        *,
+        name: str,
+        message: str,
+        schedule_kind: str,
+        schedule_value: str,
+    ) -> CronCommand:
+        return CronCommand(
+            action="add",
+            name=name.strip(),
+            message=(message.strip() or name.strip()),
+            schedule_kind=schedule_kind.strip().lower(),
+            schedule_value=schedule_value.strip(),
+        )
+
     def handle(
         self,
         command: CronCommand,
@@ -158,7 +174,11 @@ class CronService:
             "/cron list [scheduled|paused|completed|failed]\n"
             "/cron remove <task_id>\n"
             "/cron enable <task_id>\n"
-            "/cron disable <task_id>"
+            "/cron disable <task_id>\n\n"
+            "自然語句範例：\n"
+            "- 每天 9 點提醒我喝水\n"
+            "- 每 30 分鐘提醒站起來\n"
+            "- 每週一 18:20 提醒我交週報"
         )
 
     @staticmethod
