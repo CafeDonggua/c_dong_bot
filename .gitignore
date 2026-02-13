@@ -19,4 +19,5 @@ AGENTS.md
 VERSION_1_0_CHECKLIST.md
 data/
 !tests/data/
-!tests/data/*.json
+tests/data/*.json
+!tests/data/cron_nl_cases.json
